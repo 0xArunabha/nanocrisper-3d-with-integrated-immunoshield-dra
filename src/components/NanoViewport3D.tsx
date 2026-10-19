@@ -78,13 +78,7 @@ function createElectronDensityTexture(protonationFraction: number): THREE.DataTe
 }
 
 function RendererConfig({ diameter }: { diameter: number }) {
-  const { camera, gl } = useThree();
-
-  useEffect(() => {
-    gl.localClippingEnabled = true;
-    gl.toneMapping = THREE.ACESFilmicToneMapping;
-    gl.toneMappingExposure = 1.08;
-  }, [gl]);
+  const { camera } = useThree();
 
   useEffect(() => {
     const targetZ = 4.15 + Math.max(0, (diameter - 50) / 130) * 1.55;
@@ -1147,7 +1141,16 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
 
       {/* 3. Three.js Instanced WebGL Viewport */}
       <div className="flex-1 w-full relative">
-        <Canvas camera={{ position: [0, 0, 4.6], fov: 40 }} dpr={[1, 2]}>
+        <Canvas
+          camera={{ position: [0, 0, 4.6], fov: 40 }}
+          dpr={[1, 2]}
+          gl={{ localClippingEnabled: true }}
+          onCreated={({ gl }) => {
+            gl.localClippingEnabled = true;
+            gl.toneMapping = THREE.ACESFilmicToneMapping;
+            gl.toneMappingExposure = 1.08;
+          }}
+        >
           <ambientLight intensity={opticalMode === 'cryo' ? 0.55 : 0.8} />
           <directionalLight position={[6, 9, 6]} intensity={opticalMode === 'cryo' ? 0.85 : 1.25} />
           <directionalLight position={[-6, -4, -5]} intensity={0.4} color="#8a9ba8" />

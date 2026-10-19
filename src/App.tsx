@@ -247,7 +247,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
               }}
               className="w-2 h-3.5 inline-block"
             />
-            <span className="font-semibold text-sm tracking-tight text-[#e1e4e8]">
+            <span className="font-display font-bold text-sm tracking-tight text-[#e1e4e8]">
               NanoCRISPR-3D
             </span>
             <span className="text-[#686e74] text-xs">/</span>
@@ -349,7 +349,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
           className="border-b px-4 py-3 flex flex-col gap-2.5"
         >
           <div className="flex items-center justify-between">
-            <span className="font-semibold text-xs text-[#e1e4e8]">
+            <span className="font-display font-semibold text-xs tracking-tight text-[#e1e4e8]">
               Custom target sequence configuration
             </span>
             <span className="text-[11px] text-[#686e74]">
@@ -539,7 +539,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
             className="border p-3"
           >
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xs font-semibold text-[#e1e4e8]">
+              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                 Coding sequence (5' → 3') and reading frame
               </h2>
               <div className="flex items-center gap-4 text-[11px] text-[#9aa0a6]">
@@ -633,7 +633,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
             className="border p-3 flex flex-col gap-2"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-xs font-semibold text-[#e1e4e8]">
+              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                 Protospacer candidates (dual-strand discovery)
               </h2>
 
@@ -824,7 +824,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
               className="border p-3 flex flex-col gap-2"
             >
               <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold text-[#e1e4e8]">
+                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                   Oligonucleotide cloning order sheet ({cloningOligos.overhangSystem})
                 </h2>
                 <span className="text-[11px] text-[#686e74]">
@@ -891,7 +891,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
               className="border p-3 flex flex-col gap-2"
             >
               <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold text-[#e1e4e8]">
+                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                   Deaminase window (positions 4–8) codon translation for {selectedGuide.id}
                 </h2>
                 <span className="text-[11px] text-[#686e74]">
@@ -982,7 +982,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
             className="border p-3 flex flex-col gap-2"
           >
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <h2 className="text-xs font-semibold text-[#e1e4e8]">
+              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                 Cas9 surface epitope immunogenicity (South Asian HLA alleles)
               </h2>
               <button
@@ -1084,7 +1084,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
             className="border p-3 flex flex-col gap-2"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-[#e1e4e8]">
+              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                 Nanoparticle structural cutaway
               </h2>
               <span className="text-[11px] text-[#686e74]">
@@ -1104,7 +1104,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
             className="border p-3 flex flex-col gap-3"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-[#e1e4e8]">
+              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                 Lipid formulation parameters
               </h2>
               {/* Preset Buttons */}
@@ -1255,7 +1255,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
               className="border p-3 flex flex-col gap-2.5"
             >
               <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold text-[#e1e4e8]">
+                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                   Wet-lab batch preparation calculator
                 </h2>
                 <span className="text-[11px] text-[#686e74]">
@@ -1376,7 +1376,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
             className="border p-3 flex flex-col gap-2.5"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-[#e1e4e8]">
+              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                 Calculated biophysical properties
               </h2>
               {/* Stability status indicator */}
@@ -1475,7 +1475,7 @@ ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molar
             className="border p-3 flex flex-col gap-2"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-[#e1e4e8]">
+              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e1e4e8]">
                 Predicted organ biodistribution (SORT model)
               </h2>
               <span className="text-[11px] text-[#686e74]">

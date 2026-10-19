@@ -70,8 +70,9 @@ export const tokens = {
 
   // Typography scale
   typography: {
-    fontSans: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-    fontMono: '"JetBrains Mono", "SF Mono", Menlo, Consolas, "Courier New", monospace',
+    fontSans: '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontDisplay: '"Space Grotesk", sans-serif',
+    fontMono: '"IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace',
     size: {
       xs: '11px',    // metadata, labels, table data, tags
       sm: '12px',    // body text, controls, inputs
