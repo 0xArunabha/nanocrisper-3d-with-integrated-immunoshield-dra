@@ -1,0 +1,95 @@
+// src/engines/nanotech/lnpSimulator.ts
+import type { LnpFormulation, LnpBiophysicsResult } from '../types';
+
+/**
+ * Nanotech LNP Biophysical & CMC Simulation Engine.
+ * Models multi-component lipid nanoparticle assembly:
+ * - Hydrodynamic diameter ($D_h$) from PEG-lipid surface curvature constraints
+ * - Polydispersity index (PDI)
+ * - Henderson-Hasselbalch protonation at systemic pH 7.4 vs. endosomal pH 5.5
+ * - Zeta potential ($\zeta$) in mV
+ * - De Gennes polymer brush regime ($R_F / D$)
+ * - Israelachvili Critical Packing Parameter (CPP) for lamellar-to-inverted-hexagonal ($H_{\text{II}}$) transition
+ * - SAXS core Bragg diffraction repeat distance ($d_{\text{SAXS}}$)
+ * - Cellular uptake score (modelling the "PEG Dilemma" & ApoE adsorption)
+ * - SORT (Selective Organ Targeting) biodistribution
+ */
+export function simulateLnpBiophysics(form: LnpFormulation): LnpBiophysicsResult {
+  const total = form.ionizableLipid + form.dspcHelper + form.cholesterol + form.pegLipid;
+  const normPeg = (form.pegLipid / total) * 100;
+  const normChol = (form.cholesterol / total) * 100;
+
+  // 1. Hydrodynamic diameter (Dh in nm): Higher PEG-lipid increases surface curvature -> smaller particle
+  const rawDiameter = 135 - 24 * Math.log(Math.max(0.3, normPeg * 2.2)) + (6 - form.npRatio) * 3.5;
+  const diameterNm = Math.round(Math.max(42, Math.min(210, rawDiameter)));
+
+  // 2. Polydispersity Index (PDI)
+  const pdi = Number((0.06 + Math.abs(normChol - 38.5) * 0.004 + (normPeg < 1.0 ? 0.12 : 0)).toFixed(2));
+
+  // 3. Henderson-Hasselbalch Ionization: % = 100 / (1 + 10^(pH - pKa))
+  const endosomalProtonationPct = Math.round(100 / (1 + Math.pow(10, 5.5 - form.lipidPka)));
+  const bloodProtonationPct = Math.round(100 / (1 + Math.pow(10, 7.4 - form.lipidPka)));
+
+  // 4. Zeta Potential at physiological pH 7.4 (mV)
+  const zetaPotentialMv = Number(((bloodProtonationPct * 0.35) - (normPeg * 2.1)).toFixed(1));
+
+  // 5. The "PEG Dilemma" & Cellular Uptake
+  const pegPenalty = normPeg > 2.2 ? Math.max(10, 100 - Math.pow(normPeg - 2.0, 1.8) * 18) : 95;
+  const cellularUptakeScore = Math.round(Math.min(98, Math.max(8, pegPenalty)));
+
+  // 6. Endosomal Escape combines protonation at pH 5.5 + neutral charge at pH 7.4 + low PEG barrier
+  const pkaSweetSpotBonus = Math.max(0, 100 - Math.abs(form.lipidPka - 6.35) * 55);
+  const endosomalEscapeEfficiency = Math.round(
+    (endosomalProtonationPct * 0.4 + pkaSweetSpotBonus * 0.35 + cellularUptakeScore * 0.25)
+  );
+
+  // 7. Organ Tropism (SORT - Selective Organ Targeting model)
+  let liver = 78;
+  let spleen = 15;
+  let lungs = 7;
+
+  if (form.lipidPka > 6.7 || zetaPotentialMv > 8) {
+    lungs = Math.min(68, Math.round(15 + (form.lipidPka - 6.5) * 45));
+    liver = Math.max(20, 90 - lungs - 12);
+    spleen = 100 - liver - lungs;
+  } else if (form.lipidPka < 6.0 || zetaPotentialMv < -5) {
+    spleen = Math.min(62, Math.round(20 + (6.2 - form.lipidPka) * 50));
+    liver = Math.max(25, 90 - spleen - 8);
+    lungs = 100 - liver - spleen;
+  }
+
+  let stabilityStatus: LnpBiophysicsResult['stabilityStatus'] = 'Optimal Clinical LNP';
+  if (normPeg > 3.2) {
+    stabilityStatus = 'PEG Stealth Dilemma (Low Uptake)';
+  } else if (diameterNm > 140 || normPeg < 0.8) {
+    stabilityStatus = 'Aggregation Risk (Too Large)';
+  } else if (endosomalEscapeEfficiency < 58) {
+    stabilityStatus = 'Poor Endosomal Escape';
+  }
+
+  // De Gennes PEG2000 Brush Ratio: R_F (3.43 nm) / D (sqrt(0.65 / X_peg))
+  const pegMolFraction = Math.max(0.002, normPeg / 100);
+  const graftingDist = Math.sqrt(0.65 / pegMolFraction);
+  const deGennesRfOverD = Number((3.43 / graftingDist).toFixed(2));
+
+  // Israelachvili Critical Packing Parameter (CPP) in late endosome (pH 5.5)
+  const criticalPackingParam = Number((1.08 + (endosomalProtonationPct / 100) * 0.58).toFixed(2));
+
+  // SAXS q_1 Bragg Peak Repeat Spacing (nm)
+  const saxsBraggSpacingNm = Number((6.45 - (form.npRatio - 3) * 0.08).toFixed(2));
+
+  return {
+    diameterNm,
+    pdi,
+    zetaPotentialMv,
+    endosomalProtonationPct,
+    bloodProtonationPct,
+    endosomalEscapeEfficiency,
+    cellularUptakeScore,
+    deGennesRfOverD,
+    criticalPackingParam,
+    saxsBraggSpacingNm,
+    organTropism: { liver, spleen, lungs },
+    stabilityStatus
+  };
+}
