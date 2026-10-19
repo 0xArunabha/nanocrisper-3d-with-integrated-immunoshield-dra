@@ -1,60 +1,63 @@
 // src/styles/tokens.ts
-/**
- * Design tokens for NanoCRISPR-3D
- * Scientific workstation interface tokens (Benchling / Geneious / UCSC Genome Browser aesthetic)
- */
-
 export const tokens = {
-  // Color palette
   colors: {
-    // Canvas & surfaces (dark charcoal with subtle cool neutral tint, flat, no gradients)
-    canvas: '#141618',
-    surface: '#1a1c1e',
-    surfaceSubtle: '#17191b',
-    surfaceRaised: '#212427',
-    surfaceHover: '#282b2f',
-    surfaceSelected: '#242a30',
+    // Warm carbon & dark espresso-ink surfaces (replaces cold blue-greys)
+    canvas: '#12110f',
+    surface: '#181613',
+    surfaceSubtle: '#151310',
+    surfaceRaised: '#211e1a',
+    surfaceHover: '#2a2621',
+    surfaceSelected: '#2c251d',
 
-    // Borders & dividers
-    border: '#2c3035',
-    borderMuted: '#222529',
-    borderFocus: '#3f6d8c',
+    // Warm rules & hairlines
+    border: '#332e27',
+    borderMuted: '#24201b',
+    borderFocus: '#b88644',
 
-    // Typography
-    textPrimary: '#e1e4e8',
-    textSecondary: '#9aa0a6',
-    textMuted: '#686e74',
-    textInverse: '#141618',
+    // Parchment, warm bone, and sepia-grey typography
+    textPrimary: '#e8dfd1',
+    textSecondary: '#a69b8d',
+    textMuted: '#70675c',
+    textInverse: '#12110f',
 
-    // Single disciplined accent color (muted slate/denim blue)
-    accent: '#3f6d8c',
-    accentHover: '#4b7f9f',
-    accentSubdued: 'rgba(63, 109, 140, 0.14)',
-    accentBorder: '#3f6d8c',
+    // Primary Mineral Accent: Vintage Petrol / Prussian Blue
+    accent: '#4d828f',
+    accentHover: '#5e96a3',
+    accentSubdued: 'rgba(77, 130, 143, 0.16)',
+    accentBorder: '#4d828f',
 
-    // Status indicators (strictly functional data states, never decorative)
+    // Vintage Pigment Status Colors (Verdigris, Raw Ochre, Cinnabar/Terracotta)
     status: {
-      success: '#439268',
-      successSubtle: 'rgba(67, 146, 104, 0.12)',
-      warning: '#b88636',
-      warningSubtle: 'rgba(184, 134, 54, 0.12)',
-      danger: '#b54a4a',
-      dangerSubtle: 'rgba(181, 74, 74, 0.12)',
+      success: '#5e946c',       // Oxidized Verdigris / Sage
+      successSubtle: 'rgba(94, 148, 108, 0.15)',
+      warning: '#c98a3b',       // Raw Sienna / Vintage Ochre
+      warningSubtle: 'rgba(201, 138, 59, 0.15)',
+      danger: '#bd5142',        // Cinnabar / Terracotta Red
+      dangerSubtle: 'rgba(189, 81, 66, 0.15)',
     },
 
-    // Sequence track highlights
-    sequence: {
-      targetBg: 'rgba(181, 74, 74, 0.22)',
-      targetText: '#e57a7a',
-      snpBg: 'rgba(184, 134, 54, 0.22)',
-      snpText: '#deb15b',
-      guideWindowBg: 'rgba(63, 109, 140, 0.25)',
-      guideWindowText: '#a4c7df',
-      protospacerUnderline: '#3f6d8c',
-    }
-  },
+    // Molecular & Nucleotide Pigments (for 3D LNP & Sequence Tracks)
+    pigments: {
+      ochre: '#cfa052',         // Ionizable amine heads / Guanine
+      ivory: '#d9cdb8',         // DSPC phosphocholine heads
+      terracotta: '#b85b46',    // Cholesterol sterols / Thymine
+      petrol: '#528796',        // PEG-2000 corona / Cytosine
+      verdigris: '#639972',     // Protonated mRNA core / Adenine
+      mauve: '#9e6778',         // ApoE 4-helix opsonins / Cas9 RNP lobes
+      bronze: '#54493b',        // Hydrophobic sn-1/sn-2 acyl tails
+    },
 
-  // Single corner radius used across all components
+    // Sequence track highlights (harmonized with vintage pigment palette)
+    sequence: {
+      targetBg: 'rgba(189, 81, 66, 0.22)',
+      targetText: '#e27b6c',
+      snpBg: 'rgba(201, 138, 59, 0.22)',
+      snpText: '#df9e51',
+      guideWindowBg: 'rgba(77, 130, 143, 0.25)',
+      guideWindowText: '#98c2cc',
+      protospacerUnderline: '#4d828f',
+    },
+  },
   radius: '3px',
 
   // Spacing scale (multiples of 4px)
@@ -89,8 +92,8 @@ export const tokens = {
       tight: 1.25,
       normal: 1.45,
       relaxed: 1.6,
-    }
-  }
+    },
+  },
 } as const;
 
 export type Tokens = typeof tokens;

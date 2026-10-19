@@ -23,14 +23,22 @@ interface LayerVisibility {
   apoe: boolean;
 }
 
+// Fixed upper-bound capacities for zero-reallocation GPU InstancedMesh buffers
+const MAX_LIPID_HEADS = 2400;
+const MAX_ACYL_TAILS = 4800;
+const MAX_PEG_BEADS = 8400;
+const MAX_MICELLES = 420;
+const MAX_RNA_RUNGS = 180;
+
 // Fast spatial cutaway predicate for unit-sphere coordinates
-function isPointCut(x: number, y: number, z: number, mode: CutawayMode): boolean {
+function isPointCut(x: number, _y: number, z: number, mode: CutawayMode): boolean {
   if (mode === 'full' || mode === 'core') return false;
   if (mode === 'half') {
-    return z > 0.02;
+    return z > 0.0;
   }
   if (mode === 'quarter') {
-    return x > -0.02 && z > -0.02 && y > -0.82;
+    // Clean front-right quadrant cutaway (x > 0 and z > 0) matching orthogonal half-disk caps
+    return x > 0.0 && z > 0.0;
   }
   return false;
 }
@@ -110,7 +118,7 @@ function InstancedNanoparticleScene({
 }: SceneProps) {
   const groupRef = useRef<THREE.Group>(null);
 
-  // InstancedMesh refs (Mission 1: <8 GPU draw calls total)
+  // Pre-allocated InstancedMesh refs (<8 GPU draw calls total)
   const headsMeshRef = useRef<THREE.InstancedMesh>(null);
   const tailsMeshRef = useRef<THREE.InstancedMesh>(null);
   const pegMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -130,8 +138,12 @@ function InstancedNanoparticleScene({
     return 1 / (1 + Math.pow(10, ambientPh - formulation.lipidPka));
   }, [ambientPh, formulation.lipidPka]);
 
+  // Quantized protonation (2% steps) for electron-density texture caching
+  const quantizedProtonation = useMemo(() => {
+    return Math.round(liveProtonation * 50) / 50;
+  }, [liveProtonation]);
+
   // Israelachvili Critical Packing Parameter (CPP = v / (a0 * lc))
-  // Neutral ionizable lipid ~ 1.15; protonated ionizable + anionic endosomal lipid pair -> ~1.65 (H_II cone)
   const liveCpp = useMemo(() => {
     return 1.08 + liveProtonation * 0.58;
   }, [liveProtonation]);
@@ -145,7 +157,7 @@ function InstancedNanoparticleScene({
   const dspcFrac = formulation.dspcHelper / 100;
   const cholFrac = effectiveCholesterol / 100;
 
-  // High-density Fibonacci lattice: 2,400 outer lipids + 4,800 sn-1/sn-2 acyl chains
+  // 1. High-density Fibonacci lattice: 2,400 outer lipids + 4,800 sn-1/sn-2 acyl chains
   const {
     headMatrices,
     headColors,
@@ -154,7 +166,7 @@ function InstancedNanoparticleScene({
     pegBaseData,
     apoeClusters,
   } = useMemo(() => {
-    const lipidCount = 2400;
+    const lipidCount = MAX_LIPID_HEADS;
     const phi = Math.PI * (3 - Math.sqrt(5));
 
     const hMats: THREE.Matrix4[] = [];
@@ -176,7 +188,6 @@ function InstancedNanoparticleScene({
     const upVec = new THREE.Vector3(0, 1, 0);
 
     // PEG brush physics: De Gennes mushroom (<2.2 mol%) vs dense brush (>=2.2 mol%)
-    // Lower endosomal pH also induces partial DMG-PEG2000 desorption/shedding
     const pegSheddingFactor = ambientPh < 6.2 ? 0.68 : 1.0;
     const isBrush = formulation.pegLipid >= 2.2;
     const chainLength = (isBrush ? radius * 0.29 : radius * 0.15) * pegSheddingFactor;
@@ -207,29 +218,32 @@ function InstancedNanoparticleScene({
       if (seed < pegFrac * pegSheddingFactor) {
         type = 'peg';
         headScale = 0.032;
-        col.set(tokens.colors.accent);
+        col.set(tokens.colors.pigments.petrol);
       } else if (seed < pegFrac + dspcFrac) {
         type = 'dspc';
-        headScale = 0.030;
-        col.set('#8ea4b4');
+        headScale = 0.031;
+        col.set(tokens.colors.pigments.ivory);
       } else if (seed < pegFrac + dspcFrac + cholFrac) {
         type = 'chol';
-        headScale = 0.023;
-        tailLen = shellThickness * 0.52; // Planar sterol ring sits deeper in hydrophobic matrix
-        col.set('#50565e');
+        headScale = 0.024;
+        tailLen = shellThickness * 0.52;
+        col.set(tokens.colors.pigments.terracotta);
       } else {
-        // Ionizable tertiary amine lipid: shifts color under electrostatic/pH protonation
         if (opticalMode === 'electrostatic') {
-          col.lerpColors(new THREE.Color('#4a6984'), new THREE.Color('#439268'), liveProtonation);
+          col.lerpColors(
+            new THREE.Color(tokens.colors.pigments.ochre),
+            new THREE.Color(tokens.colors.status.success),
+            liveProtonation
+          );
         } else if (opticalMode === 'cryo') {
-          col.set('#9aa4ae');
+          col.set('#a89f91');
         } else {
-          col.lerpColors(new THREE.Color('#627280'), new THREE.Color('#4c8567'), liveProtonation * 0.55);
+          col.lerpColors(
+            new THREE.Color('#c49245'),
+            new THREE.Color(tokens.colors.status.success),
+            liveProtonation * 0.65
+          );
         }
-      }
-
-      if (opticalMode === 'cryo' && type !== 'ionizable') {
-        col.set(type === 'chol' ? '#586068' : '#adb8c2');
       }
 
       // Radial position of headgroup (cholesterol recessed slightly into acyl layer)
@@ -241,19 +255,17 @@ function InstancedNanoparticleScene({
       hMats.push(dummyObj.matrix.clone());
       hCols.push(col);
 
-      // Build tangent basis for dual acyl chain splay & PEG coil
+      // Build orthonormal tangent basis on sphere surface
       const refAxis = Math.abs(norm.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
       const tangent = new THREE.Vector3().crossVectors(norm, refAxis).normalize();
       const bitangent = new THREE.Vector3().crossVectors(norm, tangent).normalize();
 
-      // Dual-chain (sn-1 and sn-2) hydrophobic tails for phospholipids & ionizable lipids
       const baseQuat = new THREE.Quaternion().setFromUnitVectors(upVec, norm);
       const tailColor = new THREE.Color(
-        opticalMode === 'cryo' ? '#495159' : type === 'chol' ? '#3f464e' : '#32383f'
+        opticalMode === 'cryo' ? '#575046' : type === 'chol' ? '#6e3d32' : '#4a4033'
       );
 
       if (type === 'chol') {
-        // Single rigid sterol body
         const center = norm.clone().multiplyScalar(radialOffset - tailLen * 0.5);
         dummyObj.position.copy(center);
         dummyObj.quaternion.copy(baseQuat);
@@ -262,10 +274,10 @@ function InstancedNanoparticleScene({
         tMats.push(dummyObj.matrix.clone());
         tCols.push(tailColor);
       } else {
-        // Dual splayed acyl chains (sn-1 & sn-2)
+        // Dual splayed acyl chains (sn-1 & sn-2): premultiply world-space tangent rotation
         for (const dir of [-1, 1]) {
           const splayQuat = new THREE.Quaternion().setFromAxisAngle(tangent, dir * splayAngle);
-          const finalQuat = baseQuat.clone().multiply(splayQuat);
+          const finalQuat = baseQuat.clone().premultiply(splayQuat);
           const lateralShift = bitangent.clone().multiplyScalar(dir * 0.011);
           const center = norm
             .clone()
@@ -281,8 +293,8 @@ function InstancedNanoparticleScene({
         }
       }
 
-      // Populate PEG2000 polymer brush segments (every 2nd PEG anchor for clean visual density)
-      if (type === 'peg' && i % 2 === 0) {
+      // Populate PEG2000 polymer brush segments
+      if (type === 'peg' && i % 2 === 0 && pegData.length + beadsPerChain <= MAX_PEG_BEADS) {
         const anchorPos = norm.clone().multiplyScalar(radius);
         for (let step = 1; step <= beadsPerChain; step++) {
           const t = step / beadsPerChain;
@@ -315,7 +327,6 @@ function InstancedNanoparticleScene({
       tailMatrices: tMats,
       tailColors: tCols,
       pegBaseData: pegData,
-      apoePositions: apoeList,
       apoeClusters: apoeList,
     };
   }, [
@@ -333,27 +344,24 @@ function InstancedNanoparticleScene({
     formulation.pegLipid,
   ]);
 
-  // Mission 3: Double-stranded base-paired mRNA & sgRNA structures + Inverted H_II Micelles
+  // 2. Decoupled RNA Helices & Watson-Crick Rungs (depends ONLY on coreRadius, never rebuilt on pH scrub)
   const {
     mrnaStrandAGeo,
     mrnaStrandBGeo,
     sgrnaGeo,
     rungMatrices,
     rungColors,
-    micelleMatrices,
-    micelleColors,
   } = useMemo(() => {
     const dummy = new THREE.Object3D();
     const upVec = new THREE.Vector3(0, 1, 0);
 
-    // 1. Primary Cas9/ABE8e mRNA duplex/secondary structure coil with base-pair rungs
     const ptsA: THREE.Vector3[] = [];
     const ptsB: THREE.Vector3[] = [];
     const rMats: THREE.Matrix4[] = [];
     const rCols: THREE.Color[] = [];
 
     const rM = coreRadius * 0.68;
-    const stepsM = 180;
+    const stepsM = MAX_RNA_RUNGS;
     const helixRadius = coreRadius * 0.048;
 
     for (let i = 0; i <= stepsM; i++) {
@@ -368,7 +376,6 @@ function InstancedNanoparticleScene({
         radialMod * Math.sin(t) * Math.sin(phi)
       );
 
-      // Local helical twist vector
       const twistAngle = u * Math.PI * 38;
       const offset = new THREE.Vector3(
         Math.cos(twistAngle) * helixRadius,
@@ -381,7 +388,6 @@ function InstancedNanoparticleScene({
       ptsA.push(pA);
       ptsB.push(pB);
 
-      // Base-pair rung connecting the antiparallel strands
       if (i < stepsM) {
         const diff = new THREE.Vector3().subVectors(pB, pA);
         const len = diff.length();
@@ -392,9 +398,10 @@ function InstancedNanoparticleScene({
         dummy.updateMatrix();
         rMats.push(dummy.matrix.clone());
 
-        // Color code purine/pyrimidine Watson-Crick pairs (G-C vs A-U)
         const isGC = i % 3 !== 0;
-        rCols.push(new THREE.Color(isGC ? '#4b7f9f' : '#9e6e4e'));
+        rCols.push(
+          new THREE.Color(isGC ? tokens.colors.pigments.ochre : tokens.colors.pigments.terracotta)
+        );
       }
     }
 
@@ -403,7 +410,6 @@ function InstancedNanoparticleScene({
     const tubeA = new THREE.TubeGeometry(curveA, 150, coreRadius * 0.022, 7, true);
     const tubeB = new THREE.TubeGeometry(curveB, 150, coreRadius * 0.018, 7, true);
 
-    // 2. Secondary sgRNA Hairpin + Tetraloop Scaffold
     const sgrnaPts: THREE.Vector3[] = [];
     const rS = coreRadius * 0.46;
     const stepsS = 90;
@@ -422,14 +428,33 @@ function InstancedNanoparticleScene({
     const curveS = new THREE.CatmullRomCurve3(sgrnaPts, true);
     const tubeS = new THREE.TubeGeometry(curveS, 85, coreRadius * 0.024, 6, true);
 
-    // 3. Inverted-Micelle (H_II phase) Ionizable Lipid + Aqueous Pore Nanoclusters
+    return {
+      mrnaStrandAGeo: tubeA,
+      mrnaStrandBGeo: tubeB,
+      sgrnaGeo: tubeS,
+      rungMatrices: rMats,
+      rungColors: rCols,
+    };
+  }, [coreRadius]);
+
+  // Dispose TubeGeometries cleanly when coreRadius changes or component unmounts
+  useEffect(() => {
+    return () => {
+      mrnaStrandAGeo.dispose();
+      mrnaStrandBGeo.dispose();
+      sgrnaGeo.dispose();
+    };
+  }, [mrnaStrandAGeo, mrnaStrandBGeo, sgrnaGeo]);
+
+  // 3. Inverted-Micelle (H_II phase) Ionizable Lipid + Aqueous Pore Nanoclusters
+  const { micelleMatrices, micelleColors } = useMemo(() => {
+    const dummy = new THREE.Object3D();
     const mMats: THREE.Matrix4[] = [];
     const mCols: THREE.Color[] = [];
-    const micelleCount = 420;
     const goldenPhi = Math.PI * (3 - Math.sqrt(5));
 
-    for (let i = 0; i < micelleCount; i++) {
-      const y = 1 - (i / (micelleCount - 1)) * 2;
+    for (let i = 0; i < MAX_MICELLES; i++) {
+      const y = 1 - (i / (MAX_MICELLES - 1)) * 2;
       const r = Math.sqrt(Math.max(0, 1 - y * y));
       const theta = goldenPhi * i;
       const norm = new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r);
@@ -450,81 +475,92 @@ function InstancedNanoparticleScene({
         new THREE.Color(
           isAqueousPore
             ? liveProtonation > 0.7
-              ? '#3f6d8c'
-              : '#2b3b47'
-            : '#2c333a'
+              ? tokens.colors.accent
+              : '#2c251d'
+            : '#211e1a'
         )
       );
     }
 
     return {
-      mrnaStrandAGeo: tubeA,
-      mrnaStrandBGeo: tubeB,
-      sgrnaGeo: tubeS,
-      rungMatrices: rMats,
-      rungColors: rCols,
       micelleMatrices: mMats,
       micelleColors: mCols,
     };
   }, [coreRadius, cutawayMode, liveProtonation]);
 
-  // Upload static InstancedMesh matrices & color buffers to GPU
+  // Upload InstancedMesh matrices, colors, and active instance counts to GPU in place
   useLayoutEffect(() => {
     if (headsMeshRef.current) {
+      headsMeshRef.current.count = headMatrices.length;
       headMatrices.forEach((mat, i) => {
         headsMeshRef.current!.setMatrixAt(i, mat);
         headsMeshRef.current!.setColorAt(i, headColors[i]);
       });
       headsMeshRef.current.instanceMatrix.needsUpdate = true;
-      if (headsMeshRef.current.instanceColor) headsMeshRef.current.instanceColor.needsUpdate = true;
+      if (headsMeshRef.current.instanceColor) {
+        headsMeshRef.current.instanceColor.needsUpdate = true;
+      }
     }
 
     if (tailsMeshRef.current) {
+      tailsMeshRef.current.count = tailMatrices.length;
       tailMatrices.forEach((mat, i) => {
         tailsMeshRef.current!.setMatrixAt(i, mat);
         tailsMeshRef.current!.setColorAt(i, tailColors[i]);
       });
       tailsMeshRef.current.instanceMatrix.needsUpdate = true;
-      if (tailsMeshRef.current.instanceColor) tailsMeshRef.current.instanceColor.needsUpdate = true;
+      if (tailsMeshRef.current.instanceColor) {
+        tailsMeshRef.current.instanceColor.needsUpdate = true;
+      }
+    }
+
+    if (pegMeshRef.current) {
+      pegMeshRef.current.count = pegBaseData.length;
     }
 
     if (micellesMeshRef.current) {
+      micellesMeshRef.current.count = micelleMatrices.length;
       micelleMatrices.forEach((mat, i) => {
         micellesMeshRef.current!.setMatrixAt(i, mat);
         micellesMeshRef.current!.setColorAt(i, micelleColors[i]);
       });
       micellesMeshRef.current.instanceMatrix.needsUpdate = true;
-      if (micellesMeshRef.current.instanceColor)
+      if (micellesMeshRef.current.instanceColor) {
         micellesMeshRef.current.instanceColor.needsUpdate = true;
+      }
     }
 
     if (rungsMeshRef.current) {
+      rungsMeshRef.current.count = rungMatrices.length;
       rungMatrices.forEach((mat, i) => {
         rungsMeshRef.current!.setMatrixAt(i, mat);
         rungsMeshRef.current!.setColorAt(i, rungColors[i]);
       });
       rungsMeshRef.current.instanceMatrix.needsUpdate = true;
-      if (rungsMeshRef.current.instanceColor) rungsMeshRef.current.instanceColor.needsUpdate = true;
+      if (rungsMeshRef.current.instanceColor) {
+        rungsMeshRef.current.instanceColor.needsUpdate = true;
+      }
     }
   }, [
     headMatrices,
     headColors,
     tailMatrices,
     tailColors,
+    pegBaseData.length,
     micelleMatrices,
     micelleColors,
     rungMatrices,
     rungColors,
   ]);
 
-  // Mission 4: Real-time Brownian PEG polymer brush dynamics in useFrame
+  // Real-time Brownian PEG polymer brush dynamics in useFrame
   const pegDummy = useMemo(() => new THREE.Object3D(), []);
   useFrame((state, delta) => {
     if (groupRef.current && autoRotate) {
       groupRef.current.rotation.y += delta * 0.2;
     }
 
-    if (pegMeshRef.current && visibility.peg && cutawayMode !== 'core') {
+    if (pegMeshRef.current && visibility.peg && cutawayMode !== 'core' && pegBaseData.length > 0) {
       const time = state.clock.elapsedTime;
       const isBrush = formulation.pegLipid >= 2.2;
       const wiggleAmp = isBrush ? 0.028 : 0.056;
@@ -546,11 +582,17 @@ function InstancedNanoparticleScene({
     }
   });
 
-  // Electron-density cross-section texture for Mission 2 cut caps
+  // Quantized electron-density cross-section texture with explicit WebGL disposal
   const electronDensityTex = useMemo(
-    () => createElectronDensityTexture(liveProtonation),
-    [liveProtonation]
+    () => createElectronDensityTexture(quantizedProtonation),
+    [quantizedProtonation]
   );
+
+  useEffect(() => {
+    return () => {
+      electronDensityTex.dispose();
+    };
+  }, [electronDensityTex]);
 
   const coreStatusColor =
     biophysics.endosomalEscapeEfficiency >= 75
@@ -568,12 +610,12 @@ function InstancedNanoparticleScene({
 
   return (
     <group ref={groupRef}>
-      {/* 1. Subsurface Scattering (SSS) Core Aqueous/Lipid Envelope (Mission 4) */}
+      {/* 1. Subsurface Scattering (SSS) Core Aqueous/Lipid Envelope */}
       {visibility.mrna && (
         <mesh>
           <sphereGeometry args={[coreRadius * 0.98, 48, 48]} />
           <meshPhysicalMaterial
-            color={opticalMode === 'cryo' ? '#22282e' : '#182026'}
+            color={opticalMode === 'cryo' ? '#211e1a' : '#181613'}
             transparent
             opacity={0.44 * getLayerOpacity('mrna')}
             transmission={opticalMode === 'pbr' ? 0.45 : 0.15}
@@ -589,18 +631,16 @@ function InstancedNanoparticleScene({
       {/* 2. Bilobed Cas9 / ABE8e TadA* Ribonucleoprotein (RNP) Catalytic Core */}
       {visibility.mrna && (
         <group>
-          {/* REC Recognition Lobe */}
           <mesh position={[0.14 * coreRadius, 0.06 * coreRadius, 0]}>
             <sphereGeometry args={[coreRadius * 0.22, 24, 24]} />
             <meshPhysicalMaterial
-              color="#39556b"
+              color={tokens.colors.pigments.mauve}
               roughness={0.35}
               clearcoat={0.4}
               transparent
               opacity={0.82 * getLayerOpacity('mrna')}
             />
           </mesh>
-          {/* NUC (HNH / RuvC / TadA* Deaminase) Catalytic Lobe */}
           <mesh position={[-0.12 * coreRadius, -0.05 * coreRadius, 0.08 * coreRadius]}>
             <sphereGeometry args={[coreRadius * 0.2, 24, 24]} />
             <meshPhysicalMaterial
@@ -614,7 +654,7 @@ function InstancedNanoparticleScene({
         </group>
       )}
 
-      {/* 3. Double-Stranded Base-Paired mRNA Helix & sgRNA Scaffold (Mission 3) */}
+      {/* 3. Double-Stranded Base-Paired mRNA Helix & sgRNA Scaffold */}
       {visibility.mrna && (
         <group>
           <mesh geometry={mrnaStrandAGeo}>
@@ -628,7 +668,7 @@ function InstancedNanoparticleScene({
           </mesh>
           <mesh geometry={mrnaStrandBGeo}>
             <meshStandardMaterial
-              color="#587b91"
+              color={tokens.colors.status.warning}
               roughness={0.42}
               metalness={0.1}
               transparent={inspectedLayer !== 'all'}
@@ -637,17 +677,16 @@ function InstancedNanoparticleScene({
           </mesh>
           <mesh geometry={sgrnaGeo}>
             <meshStandardMaterial
-              color="#9e6e4e"
+              color={tokens.colors.pigments.terracotta}
               roughness={0.45}
               metalness={0.1}
               transparent={inspectedLayer !== 'all'}
               opacity={getLayerOpacity('mrna')}
             />
           </mesh>
-          {/* Instanced Watson-Crick Base-Pair Rungs */}
           <instancedMesh
             ref={rungsMeshRef}
-            args={[undefined, undefined, rungMatrices.length]}
+            args={[undefined, undefined, MAX_RNA_RUNGS]}
           >
             <cylinderGeometry args={[1, 1, 1, 6]} />
             <meshStandardMaterial
@@ -663,7 +702,7 @@ function InstancedNanoparticleScene({
       {visibility.mrna && (
         <instancedMesh
           ref={micellesMeshRef}
-          args={[undefined, undefined, micelleMatrices.length]}
+          args={[undefined, undefined, MAX_MICELLES]}
         >
           <sphereGeometry args={[1, 10, 10]} />
           <meshStandardMaterial
@@ -674,11 +713,11 @@ function InstancedNanoparticleScene({
         </instancedMesh>
       )}
 
-      {/* 5. Instanced Dual-Chain (sn-1 / sn-2) Hydrophobic Acyl Tails (Mission 1) */}
+      {/* 5. Instanced Dual-Chain (sn-1 / sn-2) Hydrophobic Acyl Tails */}
       {showOuterShell && visibility.tails && (
         <instancedMesh
           ref={tailsMeshRef}
-          args={[undefined, undefined, tailMatrices.length]}
+          args={[undefined, undefined, MAX_ACYL_TAILS]}
         >
           <cylinderGeometry args={[1, 0.85, 1, 6]} />
           <meshStandardMaterial
@@ -689,11 +728,11 @@ function InstancedNanoparticleScene({
         </instancedMesh>
       )}
 
-      {/* 6. Instanced Outer Monolayer Polar Lipid Headgroups (Mission 1 & 4) */}
+      {/* 6. Instanced Outer Monolayer Polar Lipid Headgroups */}
       {showOuterShell && visibility.lipids && (
         <instancedMesh
           ref={headsMeshRef}
-          args={[undefined, undefined, headMatrices.length]}
+          args={[undefined, undefined, MAX_LIPID_HEADS]}
         >
           <sphereGeometry args={[1, 12, 12]} />
           <meshPhysicalMaterial
@@ -706,15 +745,15 @@ function InstancedNanoparticleScene({
         </instancedMesh>
       )}
 
-      {/* 7. Instanced Dynamic PEG2000 Polymer Brush Corona (Mission 1 & 4) */}
-      {showOuterShell && visibility.peg && pegBaseData.length > 0 && (
+      {/* 7. Instanced Dynamic PEG2000 Polymer Brush Corona */}
+      {showOuterShell && visibility.peg && (
         <instancedMesh
           ref={pegMeshRef}
-          args={[undefined, undefined, pegBaseData.length]}
+          args={[undefined, undefined, MAX_PEG_BEADS]}
         >
           <sphereGeometry args={[1, 8, 8]} />
           <meshPhysicalMaterial
-            color={tokens.colors.accent}
+            color={tokens.colors.pigments.petrol}
             roughness={0.25}
             transmission={0.3}
             transparent
@@ -745,7 +784,7 @@ function InstancedNanoparticleScene({
                 >
                   <capsuleGeometry args={[0.018, 0.065, 6, 10]} />
                   <meshPhysicalMaterial
-                    color="#4f7285"
+                    color={tokens.colors.pigments.mauve}
                     roughness={0.35}
                     clearcoat={0.3}
                     transparent={inspectedLayer !== 'all'}
@@ -758,9 +797,9 @@ function InstancedNanoparticleScene({
         </group>
       )}
 
-      {/* 9. Hardware Cross-Section Electron-Density Stencil/Slice Caps (Mission 2) */}
+      {/* 9. Hardware Cross-Section Electron-Density Slice Caps */}
       {cutawayMode === 'half' && (
-        <mesh position={[0, 0, 0.01]}>
+        <mesh position={[0, 0, 0]}>
           <circleGeometry args={[radius * 0.99, 64]} />
           <meshBasicMaterial
             map={electronDensityTex}
@@ -774,23 +813,24 @@ function InstancedNanoparticleScene({
 
       {cutawayMode === 'quarter' && (
         <group>
-          {/* X-Z Wedge Electron Density Cap */}
+          {/* Z = 0 half-disk cap spanning X >= 0 across full vertical axis */}
           <mesh position={[0, 0, 0]} rotation={[0, 0, 0]}>
-            <ringGeometry args={[coreRadius * 0.15, radius * 0.99, 48, 1, 0, Math.PI / 2]} />
+            <ringGeometry args={[coreRadius * 0.15, radius * 0.99, 48, 1, -Math.PI / 2, Math.PI]} />
             <meshBasicMaterial
               map={electronDensityTex}
               transparent
-              opacity={0.55}
+              opacity={0.58}
               side={THREE.DoubleSide}
               depthWrite={false}
             />
           </mesh>
+          {/* X = 0 half-disk cap spanning Z >= 0 across full vertical axis */}
           <mesh position={[0, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
-            <ringGeometry args={[coreRadius * 0.15, radius * 0.99, 48, 1, 0, Math.PI / 2]} />
+            <ringGeometry args={[coreRadius * 0.15, radius * 0.99, 48, 1, -Math.PI / 2, Math.PI]} />
             <meshBasicMaterial
               map={electronDensityTex}
               transparent
-              opacity={0.55}
+              opacity={0.58}
               side={THREE.DoubleSide}
               depthWrite={false}
             />
@@ -833,25 +873,19 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
     100 - formulation.ionizableLipid - formulation.dspcHelper - formulation.pegLipid
   );
 
-  // Advanced De Gennes Polymer Brush & Biophysical Telemetry
+  // Live De Gennes Polymer Brush & Biophysical Telemetry synchronized with engine
   const advancedMetrics = useMemo(() => {
-    // Flory radius of PEG-2000 (N ≈ 45 monomers, monomer length a ≈ 0.35 nm): R_F = a * N^(3/5) ≈ 3.43 nm
-    const floryRadiusNm = 3.43;
-    // Average grafting distance D = sqrt(A_lipid / X_peg), where A_lipid ≈ 0.65 nm^2
     const pegMolFraction = Math.max(0.002, formulation.pegLipid / 100);
     const graftingDistanceNm = Math.sqrt(0.65 / pegMolFraction);
-    const deGennesRatio = Number((floryRadiusNm / graftingDistanceNm).toFixed(2));
+    const deGennesRatio = biophysics.deGennesRfOverD ?? Number((3.43 / graftingDistanceNm).toFixed(2));
 
-    // Live protonation at current ambient pH slider
     const liveIonizationPct = Math.round(
       100 / (1 + Math.pow(10, ambientPh - formulation.lipidPka))
     );
 
-    // Israelachvili Critical Packing Parameter (CPP)
     const cpp = Number((1.08 + (liveIonizationPct / 100) * 0.58).toFixed(2));
-
-    // Stokes-Einstein diffusivity in blood at 37°C (D = kB*T / (3*pi*eta*Dh))
     const stokesDiffusivity = Number((458 / biophysics.diameterNm).toFixed(1));
+    const saxsSpacing = biophysics.saxsBraggSpacingNm ?? 6.1;
 
     return {
       deGennesRatio,
@@ -859,9 +893,17 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
       liveIonizationPct,
       cpp,
       stokesDiffusivity,
+      saxsSpacing,
       phaseState: cpp >= 1.45 ? 'Inverted Hexagonal (HII Fusion)' : 'Lamellar / Micellar (Lα)',
     };
-  }, [formulation.pegLipid, formulation.lipidPka, ambientPh, biophysics.diameterNm]);
+  }, [
+    formulation.pegLipid,
+    formulation.lipidPka,
+    ambientPh,
+    biophysics.diameterNm,
+    biophysics.deGennesRfOverD,
+    biophysics.saxsBraggSpacingNm,
+  ]);
 
   // Dynamic Scale Bar Width (calibrates 20 nm against particle diameter)
   const scaleBarPx = useMemo(() => {
@@ -887,7 +929,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
         };
       case 'mrna':
         return {
-          title: `Quaternary Cas9/ABE8e RNP + Base-Paired mRNA Core (SAXS d ≈ 6.1 nm)`,
+          title: `Quaternary Cas9/ABE8e RNP + Base-Paired mRNA Core (SAXS d ≈ ${advancedMetrics.saxsSpacing} nm)`,
           detail: `Antiparallel base-paired mRNA/sgRNA helices complexed with protonatable tertiary amines at N/P = ${formulation.npRatio.toFixed(1)}.`,
         };
       case 'apoe':
@@ -915,7 +957,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
       className="relative w-full h-[360px] overflow-hidden border flex flex-col justify-between"
     >
       {/* 1. Top HUD Control Header */}
-      <div className="relative z-10 px-2 py-1.5 flex items-center justify-between gap-2 border-b border-[#222529] bg-[#141618]/90 backdrop-blur-xs flex-wrap">
+      <div className="relative z-10 px-2 py-1.5 flex items-center justify-between gap-2 border-b border-[#332e27] bg-[#181613]/90 backdrop-blur-xs flex-wrap">
         <div className="flex items-center gap-1.5">
           <span
             style={{
@@ -923,7 +965,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
               borderColor: tokens.colors.border,
               borderRadius: tokens.radius,
             }}
-            className="px-2 py-0.5 border font-mono text-[11px] text-[#e1e4e8] font-medium"
+            className="px-2 py-0.5 border font-mono text-[11px] text-[#e8dfd1] font-medium"
           >
             Dh: {biophysics.diameterNm} nm
           </span>
@@ -958,7 +1000,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
                       : tokens.colors.textSecondary,
                   borderRightColor: tokens.colors.borderMuted,
                 }}
-                className="px-1.5 py-0.5 text-[10px] font-medium border-r last:border-r-0 hover:text-[#e1e4e8] transition cursor-pointer"
+                className="px-1.5 py-0.5 text-[10px] font-medium border-r last:border-r-0 hover:text-[#e8dfd1] transition cursor-pointer"
               >
                 {mode.label}
               </button>
@@ -994,7 +1036,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
                       : tokens.colors.textSecondary,
                   borderRightColor: tokens.colors.borderMuted,
                 }}
-                className="px-1.5 py-0.5 text-[10px] font-medium border-r last:border-r-0 hover:text-[#e1e4e8] transition cursor-pointer"
+                className="px-1.5 py-0.5 text-[10px] font-medium border-r last:border-r-0 hover:text-[#e8dfd1] transition cursor-pointer"
               >
                 {opt.label}
               </button>
@@ -1013,7 +1055,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
             className="flex items-center gap-1.5 px-2 py-0.5 border text-[10px]"
             title="Scrub ambient pH from systemic blood (7.4) to late endosome (5.5) to observe H_II phase transition"
           >
-            <span className="text-[#9aa0a6]">pH:</span>
+            <span className="text-[#a69b8d]">pH:</span>
             <input
               type="range"
               min="5.0"
@@ -1021,11 +1063,12 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
               step="0.1"
               value={ambientPh}
               onChange={(e) => setAmbientPh(parseFloat(e.target.value))}
-              className="w-14 h-1 accent-[#3f6d8c] cursor-pointer"
+              style={{ accentColor: tokens.colors.accent }}
+              className="w-14 h-1 cursor-pointer"
             />
             <span
               className={`font-mono font-semibold ${
-                ambientPh <= 5.8 ? 'text-[#439268]' : 'text-[#e1e4e8]'
+                ambientPh <= 5.8 ? 'text-[#5e946c]' : 'text-[#e8dfd1]'
               }`}
             >
               {ambientPh.toFixed(1)}
@@ -1039,7 +1082,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
               borderColor: tokens.colors.border,
               borderRadius: tokens.radius,
             }}
-            className="px-2 py-0.5 text-[10px] text-[#9aa0a6] hover:text-[#e1e4e8] border hover:bg-[#282b2f] transition cursor-pointer"
+            className="px-2 py-0.5 text-[10px] text-[#a69b8d] hover:text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer"
           >
             {autoRotate ? 'Pause' : 'Rotate'}
           </button>
@@ -1050,7 +1093,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
               borderColor: tokens.colors.border,
               borderRadius: tokens.radius,
             }}
-            className="px-2 py-0.5 text-[10px] text-[#9aa0a6] hover:text-[#e1e4e8] border hover:bg-[#282b2f] transition cursor-pointer"
+            className="px-2 py-0.5 text-[10px] text-[#a69b8d] hover:text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer"
           >
             Reset
           </button>
@@ -1058,22 +1101,19 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
       </div>
 
       {/* 2. Interactive Layer Selector Bar */}
-      <div className="relative z-10 px-2 py-1 flex items-center justify-between text-[10px] text-[#9aa0a6] border-b border-[#1f2226] bg-[#17191b]/75">
+      <div className="relative z-10 px-2 py-1 flex items-center justify-between text-[10px] text-[#a69b8d] border-b border-[#24201b] bg-[#151310]/80">
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[#686e74]">Layers:</span>
+          <span className="text-[#70675c]">Layers:</span>
 
           <button
             onClick={() => toggleLayer('peg')}
             onMouseEnter={() => setInspectedLayer('peg')}
             onMouseLeave={() => setInspectedLayer('all')}
             className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.peg ? 'text-[#e1e4e8]' : 'text-[#585e66] line-through'
+              visibility.peg ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
             }`}
           >
-            <span
-              style={{ backgroundColor: tokens.colors.accent }}
-              className="w-1.5 h-1.5 rounded-full inline-block"
-            />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#528796] inline-block" />
             PEG corona ({formulation.pegLipid.toFixed(1)}%)
           </button>
 
@@ -1082,10 +1122,10 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
             onMouseEnter={() => setInspectedLayer('lipids')}
             onMouseLeave={() => setInspectedLayer('all')}
             className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.lipids ? 'text-[#e1e4e8]' : 'text-[#585e66] line-through'
+              visibility.lipids ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#8ea4b4] inline-block" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#cfa052] inline-block" />
             Lipid heads (2.4k)
           </button>
 
@@ -1094,10 +1134,10 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
             onMouseEnter={() => setInspectedLayer('tails')}
             onMouseLeave={() => setInspectedLayer('all')}
             className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.tails ? 'text-[#e1e4e8]' : 'text-[#585e66] line-through'
+              visibility.tails ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#343a41] border border-[#50565e] inline-block" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#6e5d49] inline-block" />
             sn-1/sn-2 tails (4.8k)
           </button>
 
@@ -1106,18 +1146,10 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
             onMouseEnter={() => setInspectedLayer('mrna')}
             onMouseLeave={() => setInspectedLayer('all')}
             className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.mrna ? 'text-[#e1e4e8]' : 'text-[#585e66] line-through'
+              visibility.mrna ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
             }`}
           >
-            <span
-              style={{
-                backgroundColor:
-                  biophysics.endosomalEscapeEfficiency >= 75
-                    ? tokens.colors.status.success
-                    : tokens.colors.status.warning,
-              }}
-              className="w-1.5 h-1.5 rounded-full inline-block"
-            />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#5e946c] inline-block" />
             RNP + dsRNA core
           </button>
 
@@ -1126,15 +1158,15 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
             onMouseEnter={() => setInspectedLayer('apoe')}
             onMouseLeave={() => setInspectedLayer('all')}
             className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.apoe ? 'text-[#e1e4e8]' : 'text-[#585e66] line-through'
+              visibility.apoe ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#4f7285] inline-block" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#9e6778] inline-block" />
             ApoE ({biophysics.cellularUptakeScore})
           </button>
         </div>
 
-        <div className="text-[10px] font-mono text-[#686e74] hidden md:block">
+        <div className="text-[10px] font-mono text-[#70675c] hidden md:block">
           CPP: {advancedMetrics.cpp} • RF/D: {advancedMetrics.deGennesRatio}
         </div>
       </div>
@@ -1169,24 +1201,24 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
         </Canvas>
 
         {/* Calibrated Cryo-TEM Physical Scale Bar (Lower Left Overlay) */}
-        <div className="absolute bottom-2 left-2.5 pointer-events-none flex flex-col gap-0.5 text-[9px] font-mono text-[#80868b]">
+        <div className="absolute bottom-2 left-2.5 pointer-events-none flex flex-col gap-0.5 text-[9px] font-mono text-[#a69b8d]">
           <div className="flex items-center gap-1.5">
             <div
               style={{ width: `${scaleBarPx}px` }}
-              className="h-[2px] bg-[#8ea4b4] relative transition-all"
+              className="h-[2px] bg-[#a69b8d] relative transition-all"
             >
-              <span className="absolute left-0 -top-1 w-[1px] h-[4px] bg-[#8ea4b4]" />
-              <span className="absolute right-0 -top-1 w-[1px] h-[4px] bg-[#8ea4b4]" />
+              <span className="absolute left-0 -top-1 w-[1px] h-[4px] bg-[#a69b8d]" />
+              <span className="absolute right-0 -top-1 w-[1px] h-[4px] bg-[#a69b8d]" />
             </div>
             <span>20 nm</span>
           </div>
-          <span className="text-[8px] text-[#585e66]">
-            Cryo-TEM calibrated • SAXS d = 6.1 nm
+          <span className="text-[8px] text-[#70675c]">
+            Cryo-TEM calibrated • SAXS d = {advancedMetrics.saxsSpacing} nm
           </span>
         </div>
 
         {/* Live Endosomal Compartment Badge (Lower Right Overlay) */}
-        <div className="absolute bottom-2 right-2.5 pointer-events-none text-[9px] font-mono px-2 py-0.5 rounded border border-[#2c3035] bg-[#141618]/85 text-[#9aa0a6]">
+        <div className="absolute bottom-2 right-2.5 pointer-events-none text-[9px] font-mono px-2 py-0.5 rounded border border-[#332e27] bg-[#181613]/85 text-[#a69b8d]">
           {ambientPh >= 7.1
             ? 'Systemic Blood (pH 7.4)'
             : ambientPh >= 6.0
@@ -1196,14 +1228,14 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
       </div>
 
       {/* 4. Bottom Contextual Biophysical HUD Inspector */}
-      <div className="relative z-10 px-2.5 py-1.5 border-t border-[#222529] bg-[#141618]/92 flex items-center justify-between text-[11px]">
+      <div className="relative z-10 px-2.5 py-1.5 border-t border-[#332e27] bg-[#181613]/92 flex items-center justify-between text-[11px]">
         <div className="flex flex-col gap-0.5 leading-tight">
-          <div className="font-medium text-[#e1e4e8] flex items-center gap-2">
+          <div className="font-medium text-[#e8dfd1] flex items-center gap-2">
             <span>{hud.title}</span>
           </div>
-          <span className="text-[10px] text-[#80868b]">{hud.detail}</span>
+          <span className="text-[10px] text-[#a69b8d]">{hud.detail}</span>
         </div>
-        <div className="text-right text-[10px] font-mono text-[#686e74] shrink-0 ml-3">
+        <div className="text-right text-[10px] font-mono text-[#70675c] shrink-0 ml-3">
           Zeta: {biophysics.zetaPotentialMv > 0 ? `+${biophysics.zetaPotentialMv}` : biophysics.zetaPotentialMv} mV • PDI: {biophysics.pdi.toFixed(2)}
         </div>
       </div>
