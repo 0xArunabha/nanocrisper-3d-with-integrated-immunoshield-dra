@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software in your research or academic work, please cite it as below."
+title: "nanoCRISPER 3D with Integrated Immunoshield DRA: Interactive 3D Lipid Nanoparticle Biophysics & Codon-Aware CRISPR Base Editing Suite"
+abstract: "A computational nanomedicine and molecular visualization platform for modeling mRNA/sgRNA base editor lipid nanoparticles (LNPs). Features Fibonacci sphere lattice cross-sections, de Gennes polymer corona scaling, ApoE opsonin kinetics, Henderson-Hasselbalch ionization kinetics, and dual-strand codon-aware base editing with South Asian genomic variant collision detection."
+version: 0.1.0
+date-released: "2026-10-19"
+license: Apache-2.0
+repository-code: "https://github.com/0xArunabha/nanocrisper-3d-with-integrated-immunoshield-dra"
+url: "https://github.com/0xArunabha/nanocrisper-3d-with-integrated-immunoshield-dra"
+authors:
+  - family-names: Ghosh
+    given-names: Arunabha
+    affiliation: "Department of Biotechnology, Maulana Abul Kalam Azad University of Technology (MAKAUT), West Bengal, India"
+keywords:
+  - "lipid nanoparticles"
+  - "lnp biophysics"
+  - "crispr base editing"
+  - "computational biology"
+  - "threejs"
+  - "react-three-fiber"
+  - "nanomedicine"
+  - "makaut"

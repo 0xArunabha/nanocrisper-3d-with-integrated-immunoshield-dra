@@ -127,8 +127,24 @@ Institution: Maulana Abul Kalam Azad University of Technology (MAKAUT), West Ben
 
 *This software and research framework was designed and developed by **Arunabha Ghosh**. Any use, derivative study, or academic evaluation must appropriately cite this repository and preserve the original author attribution according to university academic integrity regulations.*
 
+## 📌 Citation
+
+If you use or reference this work in your research, academic presentation, or project, please cite it using:
+
+```bibtex
+@software{Ghosh_nanoCRISPER_3D_2026,
+  author = {Ghosh, Arunabha},
+  title = {{nanoCRISPER 3D with Integrated Immunoshield DRA: Interactive 3D Lipid Nanoparticle Biophysics & Codon-Aware CRISPR Base Editing Suite}},
+  year = {2026},
+  url = {https://github.com/0xArunabha/nanocrisper-3d-with-integrated-immunoshield-dra},
+  note = {Department of Biotechnology, Maulana Abul Kalam Azad University of Technology (MAKAUT), West Bengal}
+}
+```
+*(You can also click the **"Cite this repository"** button in the right sidebar of the GitHub repository to export in APA or BibTeX format).*
+
 ---
 
 ## 📄 License
 
 Distributed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for complete terms, conditions, and patent grants.
+
