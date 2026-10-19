@@ -10,10 +10,6 @@
 > **Interactive 3D Lipid Nanoparticle (LNP) Biophysics Engine & Codon-Aware CRISPR Base Editing Suite**  
 > Developed by **Arunabha Ghosh** as part of the **BSc Biotechnology** curriculum at **Maulana Abul Kalam Azad University of Technology (MAKAUT), West Bengal**.
 
-<p align="center">
-  <img src="src/assets/hero.png" alt="nanoCRISPER 3D Interactive Viewport & Biophysics Suite" width="100%" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);" />
-</p>
-
 ---
 
 ## 🔬 Scientific Overview
