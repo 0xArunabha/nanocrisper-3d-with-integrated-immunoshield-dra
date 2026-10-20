@@ -2,11 +2,18 @@
 import { useState, useMemo } from 'react';
 import {
   GENE_PRESETS,
+  BASE_EDITOR_DEFINITIONS,
+  PAM_VARIANT_DEFINITIONS,
   bioEngineService,
   calculateHlaRiskScore,
+  filterEpitopesByHlaAlleles,
+  isPreferredPam,
+  SOUTH_ASIAN_HLA_ALLELES,
+  type BaseEditorType,
   type LnpFormulation,
   type GuideCandidate,
   type GenePreset,
+  type PamVariant,
 } from './engines/bioEngines';
 import { NanoViewport3D } from './components/NanoViewport3D';
 import { GenomicSequenceViewer } from './components/GenomicSequenceViewer';
@@ -42,6 +49,7 @@ export default function App() {
     disease: 'Investigational Gene Target',
     targetOrgan: 'Liver',
     editorType: 'ABE8e (A→G)',
+    pamVariant: 'SpCas9',
     sequence:
       'ATGGCCCTGTGGGGCAAGGTGAACGTGGATGAAGTTGGTGGTGAGGCCCTGGGCAGGCTGCTGGTGGTCTACCCTTGGACCCAGAGGTTC',
     mutationIndex: 18,
@@ -59,13 +67,16 @@ export default function App() {
     () =>
       Object.fromEntries(epitopeCatalog.map((ep) => [ep.peptide, true]))
   );
+  const [selectedHlaAlleles, setSelectedHlaAlleles] = useState<string[]>(
+    () => [...SOUTH_ASIAN_HLA_ALLELES]
+  );
 
   // Table filtering and sorting
   const [sortField, setSortField] = useState<SortField>('CompositeScore');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [filterStrand, setFilterStrand] = useState<'all' | '+' | '-'>('all');
   const [hideSnpCollisions, setHideSnpCollisions] = useState<boolean>(false);
-  const [canonicalPamOnly, setCanonicalPamOnly] = useState<boolean>(false);
+  const [preferredPamOnly, setPreferredPamOnly] = useState<boolean>(false);
 
   // Copy feedback state for oligos
   const [copiedOligo, setCopiedOligo] = useState<'fwd' | 'rev' | null>(null);
@@ -85,11 +96,28 @@ export default function App() {
   const [batchMrnaConcMgMl, setBatchMrnaConcMgMl] = useState<number>(1.0);
   const [showBatchCalc, setShowBatchCalc] = useState<boolean>(false);
 
+  // Editor and PAM variant overrides (allows switching architecture for presets)
+  const [editorOverride, setEditorOverride] = useState<BaseEditorType | null>(null);
+  const [pamOverride, setPamOverride] = useState<PamVariant | null>(null);
+
   // Active target preset
-  const activePreset: GenePreset = useMemo(() => {
+  const basePreset = useMemo(() => {
     if (isCustomMode) return customPreset;
     return GENE_PRESETS.find((p) => p.id === selectedPresetId) || GENE_PRESETS[0];
   }, [isCustomMode, customPreset, selectedPresetId]);
+
+  const activePreset: GenePreset = useMemo(() => {
+    return {
+      ...basePreset,
+      editorType: editorOverride ?? basePreset.editorType,
+      pamVariant: pamOverride ?? basePreset.pamVariant ?? 'SpCas9',
+    };
+  }, [basePreset, editorOverride, pamOverride]);
+
+  const activeEditorDefinition = BASE_EDITOR_DEFINITIONS[activePreset.editorType];
+  const activePamVariant = activePreset.pamVariant ?? 'SpCas9';
+  const activePamDefinition = PAM_VARIANT_DEFINITIONS[activePamVariant];
+  const editorWindowLabel = `${activeEditorDefinition.editingWindow[0]}–${activeEditorDefinition.editingWindow[1]}`;
 
   // Dual-strand guide candidates via hexagonal bioEngineService
   const allGuides = useMemo(() => bioEngineService.scanGuides(activePreset), [activePreset]);
@@ -100,7 +128,7 @@ export default function App() {
       .filter((g) => {
         if (filterStrand !== 'all' && g.strand !== filterStrand) return false;
         if (hideSnpCollisions && g.hasSasSnpCollision) return false;
-        if (canonicalPamOnly && !(g.pam[1] === 'G' && g.pam[2] === 'G')) return false;
+        if (preferredPamOnly && !isPreferredPam(g.pam, activePamVariant)) return false;
         return true;
       })
       .sort((a, b) => {
@@ -115,7 +143,7 @@ export default function App() {
           ? (valA as number) - (valB as number)
           : (valB as number) - (valA as number);
       });
-  }, [allGuides, filterStrand, hideSnpCollisions, canonicalPamOnly, sortField, sortOrder]);
+  }, [allGuides, filterStrand, hideSnpCollisions, preferredPamOnly, activePamVariant, sortField, sortOrder]);
 
   const selectedGuide: GuideCandidate | undefined =
     processedGuides[selectedGuideIdx] || processedGuides[0] || allGuides[0];
@@ -161,25 +189,31 @@ export default function App() {
     [activePreset.sequence]
   );
 
-  // ImmunoShield residual HLA risk calculation
+  // ImmunoShield residual HLA risk calculation, scoped to patient-selected alleles.
+  const patientRelevantEpitopes = useMemo(
+    () => filterEpitopesByHlaAlleles(selectedHlaAlleles, epitopeCatalog),
+    [selectedHlaAlleles, epitopeCatalog]
+  );
+  const hasPatientHlaSelection = selectedHlaAlleles.length > 0;
   const allStealthEnabled = useMemo(
-    () => epitopeCatalog.every((ep) => activeStealthMutations[ep.peptide]),
-    [epitopeCatalog, activeStealthMutations]
+    () =>
+      patientRelevantEpitopes.length > 0 &&
+      patientRelevantEpitopes.every((ep) => activeStealthMutations[ep.peptide]),
+    [patientRelevantEpitopes, activeStealthMutations]
   );
 
   const residualHlaRisk = useMemo(() => {
-    const unshielded = epitopeCatalog.filter((ep) => !activeStealthMutations[ep.peptide]);
-    if (unshielded.length === 0) return 6;
-    const rawAvg = calculateHlaRiskScore(unshielded);
-    const coverageWeight = unshielded.length / epitopeCatalog.length;
-    return Math.max(8, Math.round(rawAvg * (0.35 + 0.65 * coverageWeight)));
-  }, [epitopeCatalog, activeStealthMutations]);
+    if (!hasPatientHlaSelection) return null;
+    return calculateHlaRiskScore(patientRelevantEpitopes, activeStealthMutations);
+  }, [hasPatientHlaSelection, patientRelevantEpitopes, activeStealthMutations]);
 
   const toggleAllStealth = () => {
+    if (patientRelevantEpitopes.length === 0) return;
     const nextState = !allStealthEnabled;
-    setActiveStealthMutations(
-      Object.fromEntries(epitopeCatalog.map((ep) => [ep.peptide, nextState]))
-    );
+    setActiveStealthMutations((previous) => ({
+      ...previous,
+      ...Object.fromEntries(patientRelevantEpitopes.map((ep) => [ep.peptide, nextState])),
+    }));
   };
 
   const toggleSingleEpitope = (peptide: string) => {
@@ -187,6 +221,14 @@ export default function App() {
       ...prev,
       [peptide]: !prev[peptide],
     }));
+  };
+
+  const togglePatientHlaAllele = (allele: string) => {
+    setSelectedHlaAlleles((previous) =>
+      previous.includes(allele)
+        ? previous.filter((selected) => selected !== allele)
+        : [...previous, allele]
+    );
   };
 
   // Sort toggle handler
@@ -248,16 +290,18 @@ export default function App() {
                 `| Pos ${b.guidePos} | bp ${b.genomicIndex + 1} | \`${b.originalCodon}\` (${b.originalAA}) | \`${b.editedCodon}\` (${b.editedAA}) | ${b.classification} |`
             )
             .join('\n')
-        : '| — | — | — | — | No editable bases in window 4–8 |';
+        : `| — | — | — | — | No editable bases in window ${editorWindowLabel} |`;
 
-    const epitopeRows = epitopeCatalog
-      .map((ep) => {
-        const isShielded = activeStealthMutations[ep.peptide];
-        return `| \`${ep.peptide}\` | ${ep.residueRange} | ${ep.domain} | ${ep.hlaAllele} | ${
-          isShielded ? '<10 / 100' : `${ep.bindingScore} / 100`
-        } | ${isShielded ? ep.stealthMutation : 'Wild-type (Unmodified)'} |`;
-      })
-      .join('\n');
+    const epitopeRows = hasPatientHlaSelection
+      ? patientRelevantEpitopes
+          .map((ep) => {
+            const isShielded = activeStealthMutations[ep.peptide];
+            return `| \`${ep.peptide}\` | ${ep.residueRange} | ${ep.domain} | ${ep.hlaAllele} | ${
+              isShielded ? '<10 / 100' : `${ep.bindingScore} / 100`
+            } | ${isShielded ? ep.stealthMutation : 'Wild-type (Unmodified)'} |`;
+          })
+          .join('\n')
+      : '| — | — | — | No patient HLA alleles selected | Not assessed | — |';
 
     const content = `# Pre-IND CMC and Preclinical Evaluation Report
 Generated by NanoCRISPR-3D Evaluation Workbench
@@ -268,6 +312,8 @@ Generated by NanoCRISPR-3D Evaluation Workbench
 - Clinical indication: ${activePreset.disease}
 - Target tissue: ${activePreset.targetOrgan}
 - Base editor architecture: ${activePreset.editorType}
+- Deaminase activity window: positions ${editorWindowLabel}
+- Cas9 PAM-recognition variant: ${activePamDefinition.label} (${activePamDefinition.recognition})
 - Clinical rationale: ${activePreset.clinicalNote}
 - Selected protospacer: ${selectedGuide?.id || 'sgRNA-1'} (5'-${selectedGuide?.spacer || ''}-3')
 - Target strand: ${selectedGuide?.strand === '+' ? 'Sense (+)' : 'Antisense (-)'}
@@ -284,7 +330,7 @@ Generated by NanoCRISPR-3D Evaluation Workbench
           '%)'
     }
 
-### Deaminase Window (Positions 4–8) Codon Consequence Audit
+### Deaminase Window (Positions ${editorWindowLabel}) Codon Consequence Audit
 | Guide Pos | Genomic Index | Original Codon | Edited Codon | Consequence Classification |
 | :--- | :--- | :--- | :--- | :--- |
 ${codonAuditRows}
@@ -328,8 +374,12 @@ ${codonAuditRows}
 ${batchCalculation.components.map((c) => `- ${c.name}: ${c.massMg} mg (${c.molarConcMm} mM)`).join('\n')}
 
 ## 4. Immunogenicity and De-immunization Profile (ImmunoShield-DRA)
-- Composite residual HLA risk score: ${residualHlaRisk} / 100
+- Patient-selected HLA alleles: ${
+      hasPatientHlaSelection ? selectedHlaAlleles.join(', ') : 'Not selected (risk not assessed)'
+    }
+- Composite residual HLA risk score: ${residualHlaRisk === null ? 'Not assessed' : `${residualHlaRisk} / 100`}
 - Catalytic residue integrity (D10 / H840): Intact
+- Interpretation: illustrative curated-panel heuristic; not a clinical HLA-binding prediction.
 
 | Epitope Peptide | Residues | Domain | South Asian HLA Allele | Residual Risk | Active Engineering Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -406,6 +456,8 @@ ${epitopeRows}
                   onClick={() => {
                     setIsCustomMode(false);
                     setSelectedPresetId(preset.id);
+                    setEditorOverride(null);
+                    setPamOverride(null);
                     setSelectedGuideIdx(0);
                   }}
                   style={{
@@ -428,6 +480,8 @@ ${epitopeRows}
             <button
               onClick={() => {
                 setIsCustomMode(true);
+                setEditorOverride(null);
+                setPamOverride(null);
                 setSelectedGuideIdx(0);
               }}
               style={{
@@ -546,13 +600,15 @@ ${epitopeRows}
                 Base editor architecture
               </label>
               <select
-                value={customPreset.editorType}
-                onChange={(e) =>
-                  setCustomPreset({
-                    ...customPreset,
-                    editorType: e.target.value as 'ABE8e (A→G)' | 'BE4max (C→T)',
-                  })
-                }
+                value={activePreset.editorType}
+                onChange={(e) => {
+                  const val = e.target.value as BaseEditorType;
+                  setEditorOverride(val);
+                  setCustomPreset((prev) => ({
+                    ...prev,
+                    editorType: val,
+                  }));
+                }}
                 style={{
                   backgroundColor: tokens.colors.canvas,
                   borderColor: tokens.colors.border,
@@ -560,8 +616,38 @@ ${epitopeRows}
                 }}
                 className="w-full p-1.5 border text-xs text-[#e8dfd1] outline-none"
               >
-                <option value="ABE8e (A→G)">ABE8e (A→G deaminase)</option>
-                <option value="BE4max (C→T)">BE4max (C→T deaminase)</option>
+                {Object.entries(BASE_EDITOR_DEFINITIONS).map(([editorType, definition]) => (
+                  <option key={editorType} value={editorType}>
+                    {editorType} — positions {definition.editingWindow[0]}–{definition.editingWindow[1]}
+                  </option>
+                ))}
+              </select>
+
+              <label className="text-[11px] text-[#a69b8d] block mt-2 mb-1">
+                Cas9 PAM-recognition variant
+              </label>
+              <select
+                value={activePamVariant}
+                onChange={(e) => {
+                  const val = e.target.value as PamVariant;
+                  setPamOverride(val);
+                  setCustomPreset((prev) => ({
+                    ...prev,
+                    pamVariant: val,
+                  }));
+                }}
+                style={{
+                  backgroundColor: tokens.colors.canvas,
+                  borderColor: tokens.colors.border,
+                  borderRadius: tokens.radius,
+                }}
+                className="w-full p-1.5 border text-xs text-[#e8dfd1] outline-none"
+              >
+                {Object.entries(PAM_VARIANT_DEFINITIONS).map(([pamVariant, definition]) => (
+                  <option key={pamVariant} value={pamVariant}>
+                    {definition.label} — {definition.recognition}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -635,7 +721,7 @@ ${epitopeRows}
                 </span>
                 <span className="text-[#a69b8d] text-xs">{activePreset.name}</span>
               </div>
-              <div className="flex items-center gap-3 text-xs text-[#a69b8d]">
+              <div className="flex flex-wrap items-center gap-2.5 text-xs text-[#a69b8d]">
                 <span>
                   Target tissue:{' '}
                   <strong className="text-[#e8dfd1] font-medium">
@@ -643,12 +729,61 @@ ${epitopeRows}
                   </strong>
                 </span>
                 <span>•</span>
-                <span>
-                  Editor:{' '}
-                  <strong className="text-[#e8dfd1] font-medium">
-                    {activePreset.editorType}
-                  </strong>
-                </span>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <span>Editor:</span>
+                  <select
+                    value={activePreset.editorType}
+                    onChange={(e) => {
+                      const val = e.target.value as BaseEditorType;
+                      setEditorOverride(val);
+                      if (isCustomMode) {
+                        setCustomPreset((prev) => ({ ...prev, editorType: val }));
+                      }
+                      setSelectedGuideIdx(0);
+                    }}
+                    style={{
+                      backgroundColor: tokens.colors.canvas,
+                      borderColor: tokens.colors.border,
+                      borderRadius: tokens.radius,
+                    }}
+                    className="px-2 py-0.5 border text-xs text-[#e8dfd1] outline-none cursor-pointer hover:border-[#4d828f] focus:border-[#4d828f]"
+                    title="Switch base editor architecture (ABE8e, ABE9 narrow window, BE4max)"
+                  >
+                    {Object.entries(BASE_EDITOR_DEFINITIONS).map(([editorType, definition]) => (
+                      <option key={editorType} value={editorType}>
+                        {editorType} (pos {definition.editingWindow[0]}–{definition.editingWindow[1]})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span>•</span>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <span>PAM:</span>
+                  <select
+                    value={activePamVariant}
+                    onChange={(e) => {
+                      const val = e.target.value as PamVariant;
+                      setPamOverride(val);
+                      if (isCustomMode) {
+                        setCustomPreset((prev) => ({ ...prev, pamVariant: val }));
+                      }
+                      setSelectedGuideIdx(0);
+                    }}
+                    style={{
+                      backgroundColor: tokens.colors.canvas,
+                      borderColor: tokens.colors.border,
+                      borderRadius: tokens.radius,
+                    }}
+                    className="px-2 py-0.5 border text-xs text-[#e8dfd1] outline-none cursor-pointer hover:border-[#4d828f] focus:border-[#4d828f]"
+                    title="Switch Cas9 PAM-recognition variant (SpCas9, SpCas9-NG, SpRY)"
+                  >
+                    {Object.entries(PAM_VARIANT_DEFINITIONS).map(([variant, definition]) => (
+                      <option key={variant} value={variant}>
+                        {definition.label} ({definition.recognition})
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
 
@@ -745,11 +880,11 @@ ${epitopeRows}
                 <label className="flex items-center gap-1 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={canonicalPamOnly}
-                    onChange={(e) => setCanonicalPamOnly(e.target.checked)}
+                    checked={preferredPamOnly}
+                    onChange={(e) => setPreferredPamOnly(e.target.checked)}
                     className="accent-[#4d828f]"
                   />
-                  <span>NGG only</span>
+                  <span>{activePamDefinition.preferredPamLabel}</span>
                 </label>
               </div>
             </div>
@@ -774,7 +909,7 @@ ${epitopeRows}
                       Strand {sortField === 'strand' && (sortOrder === 'asc' ? '↑' : '↓')}
                     </th>
                     <th className="py-1 px-2 font-medium">
-                      Spacer sequence (positions 4–8 underlined)
+                      Spacer sequence (positions {editorWindowLabel} underlined)
                     </th>
                     <th
                       onClick={() => handleSort('pam')}
@@ -802,7 +937,7 @@ ${epitopeRows}
                   {processedGuides.map((g, idx) => {
                     const isSelected = idx === selectedGuideIdx;
                     const verdictColor = getVerdictStatusColor(g.verdict);
-                    const isCanonicalPam = g.pam[1] === 'G' && g.pam[2] === 'G';
+                    const hasPreferredPam = isPreferredPam(g.pam, activePamVariant);
 
                     return (
                       <tr
@@ -830,7 +965,7 @@ ${epitopeRows}
                         <td className="py-1 px-2 font-mono-seq text-[11px]">
                           <span>
                             {g.spacer
-                              .slice(0, 3)
+                              .slice(0, activeEditorDefinition.editingWindow[0] - 1)
                               .split('')
                               .map((b, i) => (
                                 <span key={i} className={getBaseColorClass(b)}>
@@ -842,11 +977,14 @@ ${epitopeRows}
                             style={{ borderRadius: tokens.radius }}
                             className="px-1 font-semibold text-[#e0ad5a] bg-[#c98a3b]/15 border-b border-[#c98a3b]"
                           >
-                            {g.spacer.slice(3, 8)}
+                            {g.spacer.slice(
+                              activeEditorDefinition.editingWindow[0] - 1,
+                              activeEditorDefinition.editingWindow[1]
+                            )}
                           </span>
                           <span>
                             {g.spacer
-                              .slice(8)
+                              .slice(activeEditorDefinition.editingWindow[1])
                               .split('')
                               .map((b, i) => (
                                 <span key={i} className={getBaseColorClass(b)}>
@@ -856,7 +994,7 @@ ${epitopeRows}
                           </span>
                         </td>
                         <td className="py-1 px-2 font-mono-seq font-semibold">
-                          <span className={isCanonicalPam ? 'text-[#d4a359]' : 'text-[#cc6b5a]'}>
+                          <span className={hasPreferredPam ? 'text-[#d4a359]' : 'text-[#cc6b5a]'}>
                             {g.pam}
                           </span>
                         </td>
@@ -985,7 +1123,7 @@ ${epitopeRows}
             >
               <div className="flex items-center justify-between">
                 <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Deaminase window (positions 4–8) codon translation for {selectedGuide.id}
+                  Deaminase window (positions {editorWindowLabel}) codon translation for {selectedGuide.id}
                 </h2>
                 <span className="text-[11px] text-[#70675c]">
                   Base conversion: {activePreset.editorType}
@@ -994,7 +1132,7 @@ ${epitopeRows}
 
               {selectedGuide.bystanders.length === 0 ? (
                 <p className="text-xs text-[#70675c] py-1">
-                  No editable target base detected within deaminase positions 4–8.
+                  No editable target base detected within deaminase positions {editorWindowLabel}.
                 </p>
               ) : (
                 <div className="overflow-x-auto">
@@ -1086,13 +1224,17 @@ ${epitopeRows}
                 <span
                   style={{
                     backgroundColor:
-                      residualHlaRisk <= 20
+                      residualHlaRisk === null
+                        ? tokens.colors.surfaceRaised
+                        : residualHlaRisk <= 20
                         ? tokens.colors.status.successSubtle
                         : residualHlaRisk <= 55
                         ? tokens.colors.status.warningSubtle
                         : tokens.colors.status.dangerSubtle,
                     color:
-                      residualHlaRisk <= 20
+                      residualHlaRisk === null
+                        ? tokens.colors.textMuted
+                        : residualHlaRisk <= 20
                         ? tokens.colors.status.success
                         : residualHlaRisk <= 55
                         ? tokens.colors.status.warning
@@ -1101,18 +1243,19 @@ ${epitopeRows}
                   }}
                   className="px-1.5 py-0.5 font-mono-seq text-[10px] font-semibold"
                 >
-                  CTL Risk: {residualHlaRisk} / 100
+                  CTL Risk: {residualHlaRisk === null ? 'Not assessed' : `${residualHlaRisk} / 100`}
                 </span>
               </div>
 
               <button
                 onClick={toggleAllStealth}
+                disabled={!hasPatientHlaSelection || patientRelevantEpitopes.length === 0}
                 style={{
                   backgroundColor: tokens.colors.surfaceRaised,
                   borderColor: tokens.colors.border,
                   borderRadius: tokens.radius,
                 }}
-                className="px-2.5 py-0.5 text-xs font-medium border hover:bg-[#2a2621] transition cursor-pointer flex items-center gap-1.5"
+                className="px-2.5 py-0.5 text-xs font-medium border hover:bg-[#2a2621] disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer flex items-center gap-1.5"
               >
                 <span
                   style={{
@@ -1123,10 +1266,61 @@ ${epitopeRows}
                   className="w-1.5 h-1.5 rounded-full"
                 />
                 <span className="text-[#e8dfd1]">
-                  {allStealthEnabled ? 'All 5 stealth mutations: Active' : 'Restore all stealth mutations'}
+                  {!hasPatientHlaSelection
+                    ? 'Select patient HLA alleles'
+                    : allStealthEnabled
+                    ? `All ${patientRelevantEpitopes.length} selected stealth mutations: Active`
+                    : 'Restore selected stealth mutations'}
                 </span>
               </button>
             </div>
+
+            <fieldset
+              style={{
+                backgroundColor: tokens.colors.canvas,
+                borderColor: tokens.colors.borderMuted,
+                borderRadius: tokens.radius,
+              }}
+              className="border px-2.5 py-2"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                <legend className="text-[11px] font-medium text-[#e8dfd1]">
+                  Patient HLA haplotype / allele set
+                </legend>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedHlaAlleles([...SOUTH_ASIAN_HLA_ALLELES])}
+                    className="text-[#4d828f] hover:text-[#5e96a3] cursor-pointer"
+                  >
+                    Select panel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedHlaAlleles([])}
+                    className="text-[#a69b8d] hover:text-[#e8dfd1] cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+                {SOUTH_ASIAN_HLA_ALLELES.map((allele) => (
+                  <label key={allele} className="flex items-center gap-1 cursor-pointer text-[11px] text-[#a69b8d]">
+                    <input
+                      type="checkbox"
+                      checked={selectedHlaAlleles.includes(allele)}
+                      onChange={() => togglePatientHlaAllele(allele)}
+                      className="accent-[#4d828f]"
+                    />
+                    {allele}
+                  </label>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[10px] text-[#70675c]">
+                Only epitopes associated with a selected allele contribute to the illustrative residual-risk score.
+              </p>
+            </fieldset>
 
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-xs">
@@ -1140,63 +1334,75 @@ ${epitopeRows}
                     <th className="py-1 px-2 font-medium">Protein domain</th>
                     <th className="py-1 px-2 font-medium">South Asian HLA allele</th>
                     <th className="py-1 px-2 font-medium text-right font-mono-seq">Risk score</th>
-                    <th className="py-1 px-2 font-medium">
-                      De-immunization mutation (click row to toggle)
-                    </th>
+                    <th className="py-1 px-2 font-medium">De-immunization mutation</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {epitopeCatalog.map((ep, i) => {
-                    const isShielded = activeStealthMutations[ep.peptide];
-                    return (
-                      <tr
-                        key={i}
-                        onClick={() => toggleSingleEpitope(ep.peptide)}
-                        style={{ borderColor: tokens.colors.borderMuted }}
-                        className="border-b text-[11px] hover:bg-[#2a2621] cursor-pointer transition"
-                      >
-                        <td className="py-1 px-2 font-mono-seq font-semibold text-[#e8dfd1]">
-                          {ep.peptide}
-                        </td>
-                        <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">
-                          {ep.residueRange}
-                        </td>
-                        <td className="py-1 px-2 text-[#a69b8d]">{ep.domain}</td>
-                        <td className="py-1 px-2 text-[#a69b8d]">{ep.hlaAllele}</td>
-                        <td className="py-1 px-2 text-right font-mono-seq">
-                          {isShielded ? (
-                            <span className="text-[#5e946c] font-medium">&lt;10</span>
-                          ) : (
-                            <span
-                              style={{ color: tokens.colors.status.danger }}
-                              className="font-semibold"
-                            >
-                              {ep.bindingScore} / 100
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-1 px-2">
-                          {isShielded ? (
-                            <span className="flex items-center gap-1.5 text-[#e8dfd1]">
+                  {!hasPatientHlaSelection ? (
+                    <tr>
+                      <td colSpan={6} className="py-3 px-2 text-center text-[11px] text-[#70675c]">
+                        Select one or more patient HLA alleles to assess the curated epitope panel.
+                      </td>
+                    </tr>
+                  ) : patientRelevantEpitopes.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-3 px-2 text-center text-[11px] text-[#70675c]">
+                        No curated panel epitopes match the selected HLA alleles.
+                      </td>
+                    </tr>
+                  ) : (
+                    patientRelevantEpitopes.map((ep) => {
+                      const isShielded = activeStealthMutations[ep.peptide];
+                      return (
+                        <tr
+                          key={ep.peptide}
+                          style={{ borderColor: tokens.colors.borderMuted }}
+                          className="border-b text-[11px] hover:bg-[#2a2621] transition"
+                        >
+                          <td className="py-1 px-2 font-mono-seq font-semibold text-[#e8dfd1]">
+                            {ep.peptide}
+                          </td>
+                          <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">
+                            {ep.residueRange}
+                          </td>
+                          <td className="py-1 px-2 text-[#a69b8d]">{ep.domain}</td>
+                          <td className="py-1 px-2 text-[#a69b8d]">{ep.hlaAllele}</td>
+                          <td className="py-1 px-2 text-right font-mono-seq">
+                            {isShielded ? (
+                              <span className="text-[#5e946c] font-medium">&lt;10</span>
+                            ) : (
                               <span
-                                style={{ backgroundColor: tokens.colors.status.success }}
+                                style={{ color: tokens.colors.status.danger }}
+                                className="font-semibold"
+                              >
+                                {ep.bindingScore} / 100
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-1 px-2">
+                            <label className="flex items-center gap-1.5 cursor-pointer text-[#e8dfd1]">
+                              <input
+                                type="checkbox"
+                                checked={isShielded}
+                                onChange={() => toggleSingleEpitope(ep.peptide)}
+                                className="accent-[#5e946c]"
+                                aria-label={`Enable ${ep.stealthMutation}`}
+                              />
+                              <span
+                                style={{
+                                  backgroundColor: isShielded
+                                    ? tokens.colors.status.success
+                                    : tokens.colors.status.danger,
+                                }}
                                 className="w-1.5 h-1.5 rounded-full shrink-0"
                               />
-                              {ep.stealthMutation}
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1.5 text-[#70675c]">
-                              <span
-                                style={{ backgroundColor: tokens.colors.status.danger }}
-                                className="w-1.5 h-1.5 rounded-full shrink-0"
-                              />
-                              Wild-type (Unmodified anchor residue)
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                              {isShielded ? ep.stealthMutation : 'Wild-type (unmodified anchor residue)'}
+                            </label>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>

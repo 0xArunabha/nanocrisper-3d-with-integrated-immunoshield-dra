@@ -1,6 +1,11 @@
 // src/components/GenomicSequenceViewer.tsx
 import { useState, useMemo } from 'react';
-import type { GenePreset, GuideCandidate, BystanderEdit } from '../engines/types';
+import {
+  BASE_EDITOR_DEFINITIONS,
+  type BystanderEdit,
+  type GenePreset,
+  type GuideCandidate,
+} from '../engines/types';
 import { tokens } from '../styles/tokens';
 import { Copy, Check, Info, Crosshair, ArrowRight, ArrowLeft } from 'lucide-react';
 
@@ -68,6 +73,10 @@ export function GenomicSequenceViewer({
   const seqLength = sequence.length;
   const numCodons = Math.ceil(seqLength / 3);
   const totalTrackWidth = seqLength * BASE_WIDTH_PX;
+  const editorDefinition = BASE_EDITOR_DEFINITIONS[preset.editorType];
+  const [windowStartPosition, windowEndPosition] = editorDefinition.editingWindow;
+  const editorWindowLabel = `${windowStartPosition}–${windowEndPosition}`;
+  const editorWindowWidth = windowEndPosition - windowStartPosition + 1;
 
   // Active guide geometry calculations
   const guideMetrics = useMemo(() => {
@@ -77,11 +86,15 @@ export function GenomicSequenceViewer({
     const spacerStart = selectedGuide.startIndex;
     const spacerEnd = selectedGuide.startIndex + 19;
 
-    // Deaminase window (positions 4..8 from 5' end of spacer)
-    const windowStart = isSense ? spacerStart + 3 : spacerStart + 12;
-    const windowEnd = isSense ? spacerStart + 7 : spacerStart + 16;
+    // Deaminase window from the selected editor's 5' spacer positions.
+    const windowStart = isSense
+      ? spacerStart + (windowStartPosition - 1)
+      : spacerStart + (20 - windowEndPosition);
+    const windowEnd = isSense
+      ? spacerStart + (windowEndPosition - 1)
+      : spacerStart + (20 - windowStartPosition);
 
-    // 3' PAM motif (NGG/NAG) coordinates
+    // 3' PAM motif coordinates for the selected guide.
     const pamStart = isSense ? spacerStart + 20 : spacerStart - 3;
     const pamEnd = isSense ? spacerStart + 22 : spacerStart - 1;
 
@@ -94,7 +107,7 @@ export function GenomicSequenceViewer({
       pamStart,
       pamEnd,
     };
-  }, [selectedGuide]);
+  }, [selectedGuide, windowStartPosition, windowEndPosition]);
 
   // Copy sequence handlers
   const handleCopy = (text: string, type: 'cds' | 'protein') => {
@@ -130,7 +143,7 @@ export function GenomicSequenceViewer({
 
         inWindow = idx >= guideMetrics.windowStart && idx <= guideMetrics.windowEnd;
         guideContext = `${selectedGuide.id} • Spacer pos ${guidePos} (Strand ${selectedGuide.strand})${
-          inWindow ? ' • Deaminase Catalytic Window (pos 4–8)' : ''
+          inWindow ? ` • Deaminase Catalytic Window (pos ${editorWindowLabel})` : ''
         }`;
       } else if (idx >= guideMetrics.pamStart && idx <= guideMetrics.pamEnd) {
         guideContext = `${selectedGuide.id} • PAM Binding Motif (${selectedGuide.pam})`;
@@ -155,7 +168,16 @@ export function GenomicSequenceViewer({
       inWindow,
       bystander,
     };
-  }, [hoveredBaseIdx, preset, sequence, seqLength, wildTypeProtein, selectedGuide, guideMetrics]);
+  }, [
+    hoveredBaseIdx,
+    preset,
+    sequence,
+    seqLength,
+    wildTypeProtein,
+    selectedGuide,
+    guideMetrics,
+    editorWindowLabel,
+  ]);
 
   return (
     <div
@@ -189,9 +211,12 @@ export function GenomicSequenceViewer({
             <span className="w-2 h-2 rotate-45 bg-[#c98a3b] ring-1 ring-[#df9e51]/60" />
             SAS SNP (bp {preset.sasSnpIndex + 1})
           </span>
-          <span className="flex items-center gap-1.5" title="Deaminase processive editing window (positions 4-8)">
+          <span
+            className="flex items-center gap-1.5"
+            title={`Deaminase processive editing window (positions ${editorWindowLabel})`}
+          >
             <span className="w-2.5 h-1.5 rounded-[1px] bg-[#c98a3b]/40 border border-[#c98a3b]" />
-            Deaminase window (4–8)
+            Deaminase window ({editorWindowLabel})
           </span>
           <span className="flex items-center gap-1.5" title="Active 20-nt protospacer guide">
             <span className="w-2.5 h-1.5 rounded-[1px] bg-[#4d828f]/30 border border-[#4d828f]" />
@@ -199,7 +224,7 @@ export function GenomicSequenceViewer({
           </span>
           <span className="flex items-center gap-1.5" title="3' Adjacent Protospacer Adjacent Motif">
             <span className="w-2.5 h-1.5 rounded-[1px] bg-[#cfa052]/20 border border-[#cfa052]/60" />
-            PAM (NGG)
+            PAM ({selectedGuide?.pam ?? '—'})
           </span>
 
           {/* Quick Copy Buttons */}
@@ -477,16 +502,16 @@ export function GenomicSequenceViewer({
                   )}
                 </div>
 
-                {/* Nested Deaminase Catalytic Window Overlay (positions 4–8) */}
+                {/* Nested deaminase catalytic-window overlay */}
                 <div
                   style={{
                     left: `${guideMetrics.windowStart * BASE_WIDTH_PX}px`,
-                    width: `${5 * BASE_WIDTH_PX}px`,
+                    width: `${editorWindowWidth * BASE_WIDTH_PX}px`,
                   }}
                   className="absolute top-1 h-5 rounded-[2px] bg-[#c98a3b]/30 border border-[#c98a3b]/90 flex items-center justify-center text-[8px] font-mono-seq font-semibold text-[#f0ba65] select-none shadow-xs pointer-events-none"
-                  title="Deaminase Catalytic Window (spacer positions 4–8)"
+                  title={`Deaminase Catalytic Window (spacer positions ${editorWindowLabel})`}
                 >
-                  Window 4–8
+                  Window {editorWindowLabel}
                 </div>
 
                 {/* 3-nt Adjacent PAM Motif Tag */}

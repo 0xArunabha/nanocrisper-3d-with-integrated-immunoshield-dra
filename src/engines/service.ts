@@ -85,7 +85,7 @@ export class RemotePythonBioEngineService implements IBioEngineService {
   }
 
   async fetchScanGuides(preset: GenePreset): Promise<GuideCandidate[]> {
-    const cacheKey = `${preset.id}:${preset.editorType}:${preset.mutationIndex}:${preset.sequence}`;
+    const cacheKey = `${preset.id}:${preset.editorType}:${preset.pamVariant ?? 'SpCas9'}:${preset.mutationIndex}:${preset.sequence}`;
     try {
       const res = await fetch(`${this.baseUrl}/crispr/scan`, {
         method: 'POST',
@@ -123,7 +123,7 @@ export class RemotePythonBioEngineService implements IBioEngineService {
   }
 
   scanGuides(preset: GenePreset): GuideCandidate[] {
-    const cacheKey = `${preset.id}:${preset.editorType}:${preset.mutationIndex}:${preset.sequence}`;
+    const cacheKey = `${preset.id}:${preset.editorType}:${preset.pamVariant ?? 'SpCas9'}:${preset.mutationIndex}:${preset.sequence}`;
     const cached = this.guideCache.get(cacheKey);
     if (cached) return cached;
     return this.localFallback.scanGuides(preset);

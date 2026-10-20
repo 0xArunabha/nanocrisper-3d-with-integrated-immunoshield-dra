@@ -1,5 +1,11 @@
 // src/engines/crispr/guideScanner.ts
-import type { GenePreset, GuideCandidate, BystanderEdit } from '../types';
+import {
+  BASE_EDITOR_DEFINITIONS,
+  type BystanderEdit,
+  type GenePreset,
+  type GuideCandidate,
+  type PamVariant,
+} from '../types';
 
 export const CODON_TABLE: Record<string, string> = {
   TTT: 'F', TTC: 'F', TTA: 'L', TTG: 'L', CTT: 'L', CTC: 'L', CTA: 'L', CTG: 'L',
@@ -32,8 +38,43 @@ export function reverseComplement(seq: string): string {
     .join('');
 }
 
+export type PamClassification = 'preferred' | 'relaxed';
+
+/**
+ * Classifies a concrete three-base PAM for the selected Cas9 variant.
+ * Standard SpCas9 accepts NGG preferentially and NAG as a relaxed motif;
+ * SpCas9-NG expands recognition to NGN; SpRY is modeled as NNN with an
+ * NRN-over-NYN preference for ranking.
+ */
+export function classifyPam(
+  pam: string,
+  pamVariant: PamVariant = 'SpCas9'
+): PamClassification | null {
+  const normalizedPam = pam.toUpperCase();
+  if (!/^[ACGT]{3}$/.test(normalizedPam)) return null;
+
+  const [, secondBase, thirdBase] = normalizedPam;
+
+  switch (pamVariant) {
+    case 'SpCas9':
+      if (secondBase === 'G' && thirdBase === 'G') return 'preferred';
+      // NAG is 5'-N-A-G-3', not NGA.
+      if (secondBase === 'A' && thirdBase === 'G') return 'relaxed';
+      return null;
+    case 'SpCas9-NG':
+      if (secondBase !== 'G') return null;
+      return thirdBase === 'G' ? 'preferred' : 'relaxed';
+    case 'SpRY':
+      return secondBase === 'A' || secondBase === 'G' ? 'preferred' : 'relaxed';
+  }
+}
+
+export function isPreferredPam(pam: string, pamVariant: PamVariant = 'SpCas9'): boolean {
+  return classifyPam(pam, pamVariant) === 'preferred';
+}
+
 function scoreGuideCandidate(
-  isCanonicalPam: boolean,
+  hasPreferredPam: boolean,
   gcContent: number,
   targetInWindow: boolean,
   targetAtPeakCenter: boolean,
@@ -41,7 +82,7 @@ function scoreGuideCandidate(
   edits: BystanderEdit[],
   hasSasSnpCollision: boolean
 ): { score: number; verdict: GuideCandidate['verdict'] } {
-  let score = isCanonicalPam ? 65 : 48;
+  let score = hasPreferredPam ? 65 : 48;
 
   if (gcContent >= 40 && gcContent <= 60) {
     score += 15;
@@ -91,32 +132,35 @@ function scoreGuideCandidate(
 
 /**
  * Dual-Strand Codon-Aware CRISPR & Base Editor Discovery Engine.
- * Scans both sense (+) and antisense (-) strands for 20nt protospacers with 3' NGG/NAG PAMs,
- * simulates processive co-editing across the 4-8 deaminase window, audits codon consequences,
+ * Scans both sense (+) and antisense (-) strands for 20nt protospacers with a
+ * selected nuclease's valid 3' PAM, simulates co-editing across the selected
+ * deaminase window, audits codon consequences,
  * and flags South Asian (SAS) polymorphism collisions across the full 23-nt target + PAM span.
  */
 export function scanForGuides(preset: GenePreset): GuideCandidate[] {
   const seq = preset.sequence.toUpperCase();
   const candidates: GuideCandidate[] = [];
-  const targetBase = preset.editorType.startsWith('ABE') ? 'A' : 'C';
-  const replacementBase = preset.editorType.startsWith('ABE') ? 'G' : 'T';
+  const editor = BASE_EDITOR_DEFINITIONS[preset.editorType];
+  const pamVariant = preset.pamVariant ?? 'SpCas9';
+  const { targetBase, replacementBase } = editor;
+  const [windowStart, windowEnd] = editor.editingWindow;
 
   // 1. Scan Sense (+) Strand (5'-[20nt spacer]-[3nt PAM]-3' covering sense indices i .. i+22)
   for (let i = 0; i <= seq.length - 23; i++) {
     const spacer = seq.slice(i, i + 20);
     const pam = seq.slice(i + 20, i + 23);
 
-    const isCanonicalPam = pam[1] === 'G' && pam[2] === 'G';
-    const isRelaxedPam = pam[1] === 'G' && pam[2] === 'A';
-    if (!isCanonicalPam && !isRelaxedPam) continue;
+    const pamClassification = classifyPam(pam, pamVariant);
+    if (!pamClassification) continue;
+    const hasPreferredPam = pamClassification === 'preferred';
 
     const gcCount = (spacer.match(/[GC]/g) || []).length;
     const gcContent = Math.round((gcCount / 20) * 100);
     const hasPolIIITerminator = spacer.includes('TTTT');
 
-    // Pre-compute processive co-editing across window positions 4..8 on the sense strand
+    // Pre-compute co-editing across the selected editor's window on the sense strand.
     const editedSeqChars = seq.split('');
-    for (let pos = 4; pos <= 8; pos++) {
+    for (let pos = windowStart; pos <= windowEnd; pos++) {
       const gIdx = i + (pos - 1);
       if (gIdx >= 0 && gIdx < seq.length && seq[gIdx] === targetBase) {
         editedSeqChars[gIdx] = replacementBase;
@@ -128,7 +172,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
     let targetInWindow = false;
     let targetAtPeakCenter = false;
 
-    for (let pos = 4; pos <= 8; pos++) {
+    for (let pos = windowStart; pos <= windowEnd; pos++) {
       const genomicIdx = i + (pos - 1);
       if (genomicIdx < 0 || genomicIdx >= seq.length) continue;
 
@@ -144,7 +188,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
         const isTarget = genomicIdx === preset.mutationIndex;
         if (isTarget) {
           targetInWindow = true;
-          if (pos >= 5 && pos <= 7) targetAtPeakCenter = true;
+          if (editor.peakPositions.includes(pos)) targetAtPeakCenter = true;
         }
 
         let classification: BystanderEdit['classification'] = 'Missense (Pathogenic Risk)';
@@ -170,7 +214,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
 
     const hasSasSnpCollision = preset.sasSnpIndex >= i && preset.sasSnpIndex <= i + 22;
     const { score, verdict } = scoreGuideCandidate(
-      isCanonicalPam,
+      hasPreferredPam,
       gcContent,
       targetInWindow,
       targetAtPeakCenter,
@@ -201,9 +245,9 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
     const spacer = reverseComplement(seq.slice(i, i + 20));
     const pam = reverseComplement(seq.slice(i - 3, i));
 
-    const isCanonicalPam = pam[1] === 'G' && pam[2] === 'G';
-    const isRelaxedPam = pam[1] === 'G' && pam[2] === 'A';
-    if (!isCanonicalPam && !isRelaxedPam) continue;
+    const pamClassification = classifyPam(pam, pamVariant);
+    if (!pamClassification) continue;
+    const hasPreferredPam = pamClassification === 'preferred';
 
     const gcCount = (spacer.match(/[GC]/g) || []).length;
     const gcContent = Math.round((gcCount / 20) * 100);
@@ -212,7 +256,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
     // Antisense A->G produces sense T->C; Antisense C->T produces sense G->A
     const senseReplacement = targetBase === 'A' ? 'C' : 'A';
     const editedSeqChars = seq.split('');
-    for (let pos = 4; pos <= 8; pos++) {
+    for (let pos = windowStart; pos <= windowEnd; pos++) {
       const gIdx = (i + 19) - (pos - 1);
       if (gIdx >= 0 && gIdx < seq.length && reverseComplement(seq[gIdx]) === targetBase) {
         editedSeqChars[gIdx] = senseReplacement;
@@ -224,7 +268,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
     let targetInWindow = false;
     let targetAtPeakCenter = false;
 
-    for (let pos = 4; pos <= 8; pos++) {
+    for (let pos = windowStart; pos <= windowEnd; pos++) {
       const genomicIdx = (i + 19) - (pos - 1);
       if (genomicIdx < 0 || genomicIdx >= seq.length) continue;
 
@@ -241,7 +285,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
         const isTarget = genomicIdx === preset.mutationIndex;
         if (isTarget) {
           targetInWindow = true;
-          if (pos >= 5 && pos <= 7) targetAtPeakCenter = true;
+          if (editor.peakPositions.includes(pos)) targetAtPeakCenter = true;
         }
 
         let classification: BystanderEdit['classification'] = 'Missense (Pathogenic Risk)';
@@ -268,7 +312,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
     // Full 23-nt antisense footprint spans PAM (i-3 .. i-1) + spacer (i .. i+19)
     const hasSasSnpCollision = preset.sasSnpIndex >= i - 3 && preset.sasSnpIndex <= i + 19;
     const { score, verdict } = scoreGuideCandidate(
-      isCanonicalPam,
+      hasPreferredPam,
       gcContent,
       targetInWindow,
       targetAtPeakCenter,

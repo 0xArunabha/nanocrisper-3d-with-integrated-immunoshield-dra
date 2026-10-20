@@ -9,6 +9,7 @@ export const GENE_PRESETS: GenePreset[] = [
     disease: 'Beta-Thalassemia / Sickle Cell Disease (HbS E6V)',
     targetOrgan: 'Bone Marrow (HSPC)',
     editorType: 'ABE8e (A→G)',
+    pamVariant: 'SpCas9',
     // Codon-aligned sequence around HBB Glu6Val (GTG -> GAG via antisense or Makassar GCG)
     sequence: 'ATGGTGCACCTGACTCCTGTGGAGAAGTCTGCCGTTACTGCCCTGTGGGGCAAGGTGAACGTGGATGAAGTTGGTGGTGAGGCCCTGGGCAG',
     mutationIndex: 19,
@@ -24,6 +25,7 @@ export const GENE_PRESETS: GenePreset[] = [
     disease: 'Familial Hypercholesterolemia (VERVE-101 Benchmark)',
     targetOrgan: 'Liver',
     editorType: 'ABE8e (A→G)',
+    pamVariant: 'SpCas9',
     sequence: 'ATGGGCACCGTCAGCTCCAGGCAGTCCTGGTGGCCGGGGCCACTGCTGCTGCTGCTGCTGCTGCTCCTGGGTCCCGCGGGCGCCCGTGCGC',
     mutationIndex: 22,
     sasSnpIndex: 45,
@@ -38,6 +40,7 @@ export const GENE_PRESETS: GenePreset[] = [
     disease: 'Hereditary ATTR Amyloidosis (NTLA-2001 Benchmark)',
     targetOrgan: 'Liver',
     editorType: 'BE4max (C→T)',
+    pamVariant: 'SpCas9',
     sequence: 'ATGGCTTCTCATCGTCTGCTCCTCCTCTGCCTTGCTGGACTGGTATTTGTGTCTGAGGCTGGCCCTACGGGCACCGGTGAATCCAAGTGTCCT',
     mutationIndex: 43,
     sasSnpIndex: 52,

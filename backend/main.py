@@ -38,13 +38,16 @@ class GenePreset(BaseModel):
     name: str
     disease: str
     targetOrgan: Literal["Liver", "Bone Marrow (HSPC)", "Lung"]
-    editorType: Literal["ABE8e (A→G)", "BE4max (C→T)"]
+    editorType: Literal["ABE8e (A→G)", "ABE9 (A→G; window 5–6)", "BE4max (C→T)"]
+    pamVariant: Literal["SpCas9", "SpCas9-NG", "SpRY"] = "SpCas9"
     sequence: str
     mutationIndex: int
     sasSnpIndex: int
-    sasSnpId: str
-    sasAlleleFreq: float
-    clinicalNote: str
+    sasSnpId: str = "Unmapped"
+    sasAlleleFreq: float = 0.05
+    clinicalNote: str = ""
+
+    model_config = {"extra": "ignore"}
 
 
 class BystanderEdit(BaseModel):
@@ -144,9 +147,22 @@ class EpitopeHotspot(BaseModel):
     residueRange: str
     domain: str
     hlaAllele: str
+    hlaAlleles: list[str]
     bindingScore: int
     stealthMutation: str
     catalyticSafe: bool
+
+
+class HlaAssessmentRequest(BaseModel):
+    selectedAlleles: list[str] = []
+    activeStealthMutations: dict[str, bool] = {}
+
+    model_config = {"extra": "ignore"}
+
+
+class HlaAssessmentResult(BaseModel):
+    patientRelevantEpitopes: list[EpitopeHotspot]
+    residualRiskScore: int
 
 
 # ============================================================================
@@ -172,9 +188,31 @@ RNA_DNA_DG37: dict[str, float] = {
     "GA": -1.5, "GT": -1.1, "GC": -2.7, "GG": -2.9,
 }
 
-# Empirical positional activity weights inside window 4..8 for ABE8e vs BE4max
+# Empirical positional activity weights used by the local guide-ranking model.
 ABE8E_POS_WEIGHTS: dict[int, float] = {4: 0.78, 5: 1.00, 6: 1.00, 7: 0.92, 8: 0.68}
+ABE9_POS_WEIGHTS: dict[int, float] = {5: 1.00, 6: 1.00}
 BE4MAX_POS_WEIGHTS: dict[int, float] = {4: 0.88, 5: 0.98, 6: 1.00, 7: 0.86, 8: 0.62}
+
+BASE_EDITOR_CONFIGS: dict[str, dict[str, object]] = {
+    "ABE8e (A→G)": {
+        "target_base": "A",
+        "replacement_base": "G",
+        "window": (4, 8),
+        "weights": ABE8E_POS_WEIGHTS,
+    },
+    "ABE9 (A→G; window 5–6)": {
+        "target_base": "A",
+        "replacement_base": "G",
+        "window": (5, 6),
+        "weights": ABE9_POS_WEIGHTS,
+    },
+    "BE4max (C→T)": {
+        "target_base": "C",
+        "replacement_base": "T",
+        "window": (4, 8),
+        "weights": BE4MAX_POS_WEIGHTS,
+    },
+}
 
 CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
     EpitopeHotspot(
@@ -182,6 +220,7 @@ CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
         residueRange="aa 236–244",
         domain="REC2 Domain",
         hlaAllele="HLA-A*02:01 / HLA-A*24:02 (Common Indian)",
+        hlaAlleles=["HLA-A*02:01", "HLA-A*24:02"],
         bindingScore=92,
         stealthMutation="L240T (Disrupts MHC-I anchor pocket B without touching DNA groove)",
         catalyticSafe=True,
@@ -191,6 +230,7 @@ CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
         residueRange="aa 836–844",
         domain="HNH Catalytic Core (Contains H840)",
         hlaAllele="HLA-A*11:01 (High South Asian Frequency ~21%)",
+        hlaAlleles=["HLA-A*11:01"],
         bindingScore=84,
         stealthMutation="K836R (Preserves H840 active-site histidine required for strand nicking)",
         catalyticSafe=True,
@@ -200,6 +240,7 @@ CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
         residueRange="aa 1012–1020",
         domain="RuvC-III Domain",
         hlaAllele="HLA-A*24:02 (South Asian Frequency ~18%)",
+        hlaAlleles=["HLA-A*24:02"],
         bindingScore=88,
         stealthMutation="L1020G (Eliminates C-terminal anchor binding to HLA groove)",
         catalyticSafe=True,
@@ -209,6 +250,7 @@ CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
         residueRange="aa 418–426",
         domain="Bridge Helix (Structural Stability)",
         hlaAllele="HLA-B*40:06 (High Dravidian / SAS Frequency ~14%)",
+        hlaAlleles=["HLA-B*40:06"],
         bindingScore=81,
         stealthMutation="F421A (Masks hydrophobic anchor while preserving alpha-helical backbone)",
         catalyticSafe=True,
@@ -218,6 +260,7 @@ CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
         residueRange="aa 674–682",
         domain="REC3 Domain (Target RNA Alignment)",
         hlaAllele="HLA-B*15:02 (High Indo-Aryan SAS Frequency ~12%)",
+        hlaAlleles=["HLA-B*15:02"],
         bindingScore=78,
         stealthMutation="L675S (Ablates C-terminal peptide binding to MHC cleft)",
         catalyticSafe=True,
@@ -228,6 +271,31 @@ CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
 def reverse_complement(seq: str) -> str:
     comp = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
     return "".join(comp.get(b, b) for b in reversed(seq.upper()))
+
+
+def classify_pam(
+    pam: str, pam_variant: Literal["SpCas9", "SpCas9-NG", "SpRY"]
+) -> Literal["preferred", "relaxed"] | None:
+    """Classify a concrete 3-nt PAM using the same rules as the web engine."""
+    normalized = pam.upper()
+    if len(normalized) != 3 or any(base not in "ACGT" for base in normalized):
+        return None
+
+    second_base, third_base = normalized[1], normalized[2]
+    if pam_variant == "SpCas9":
+        if second_base == "G" and third_base == "G":
+            return "preferred"
+        # NAG is 5'-N-A-G-3', not NGA.
+        if second_base == "A" and third_base == "G":
+            return "relaxed"
+        return None
+    if pam_variant == "SpCas9-NG":
+        if second_base != "G":
+            return None
+        return "preferred" if third_base == "G" else "relaxed"
+
+    # SpRY is modeled as NNN, with NRN preferred over NYN for ranking.
+    return "preferred" if second_base in ("A", "G") else "relaxed"
 
 
 def calc_rna_dna_dg37(spacer: str) -> float:
@@ -241,14 +309,14 @@ def calc_rna_dna_dg37(spacer: str) -> float:
 
 def score_candidate_thermodynamic(
     spacer: str,
-    is_canonical_pam: bool,
+    has_preferred_pam: bool,
     gc_content: int,
     target_in_window: bool,
     target_pos_weight: float,
     edits: list[BystanderEdit],
     has_sas_snp: bool,
 ) -> tuple[int, Literal["Optimal Clinical Guide", "Safe (Silent Bystander)", "High Risk (Bystander/SNP)", "Low Efficiency"]]:
-    score = 65.0 if is_canonical_pam else 48.0
+    score = 65.0 if has_preferred_pam else 48.0
 
     # 1. Nearest-Neighbor RNA:DNA Hybridization Free Energy Bonus
     # Optimal R-loop invasion occurs around dG_37 in [-34.0, -24.0] kcal/mol
@@ -332,10 +400,11 @@ def health_check():
 @app.post("/api/v1/crispr/scan", response_model=list[GuideCandidate])
 def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
     seq = preset.sequence.upper()
-    is_abe = preset.editorType.startswith("ABE")
-    target_base = "A" if is_abe else "C"
-    replacement_base = "G" if is_abe else "T"
-    pos_weights = ABE8E_POS_WEIGHTS if is_abe else BE4MAX_POS_WEIGHTS
+    editor_config = BASE_EDITOR_CONFIGS[preset.editorType]
+    target_base = str(editor_config["target_base"])
+    replacement_base = str(editor_config["replacement_base"])
+    window_start, window_end = editor_config["window"]
+    pos_weights = editor_config["weights"]
 
     candidates: list[GuideCandidate] = []
 
@@ -343,17 +412,16 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
     for i in range(0, len(seq) - 22):
         spacer = seq[i : i + 20]
         pam = seq[i + 20 : i + 23]
-        is_canonical = pam[1] == "G" and pam[2] == "G"
-        is_relaxed = pam[1] == "G" and pam[2] == "A"
-        if not (is_canonical or is_relaxed):
+        pam_classification = classify_pam(pam, preset.pamVariant)
+        if pam_classification is None:
             continue
 
         gc_count = sum(1 for b in spacer if b in ("G", "C"))
         gc_content = round((gc_count / 20) * 100)
 
-        # Processive co-editing across window 4..8
+        # Co-editing across the selected editor's activity window.
         co_edited = list(seq)
-        for pos in range(4, 9):
+        for pos in range(window_start, window_end + 1):
             g_idx = i + (pos - 1)
             if 0 <= g_idx < len(seq) and seq[g_idx] == target_base:
                 co_edited[g_idx] = replacement_base
@@ -363,7 +431,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
         target_in_window = False
         target_pos_weight = 0.0
 
-        for pos in range(4, 9):
+        for pos in range(window_start, window_end + 1):
             g_idx = i + (pos - 1)
             if g_idx < 0 or g_idx >= len(seq):
                 continue
@@ -406,7 +474,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
         has_sas_snp = i <= preset.sasSnpIndex <= (i + 22)
         score, verdict = score_candidate_thermodynamic(
             spacer,
-            is_canonical,
+            pam_classification == "preferred",
             gc_content,
             target_in_window,
             target_pos_weight,
@@ -435,16 +503,15 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
     for i in range(3, len(seq) - 19):
         spacer = reverse_complement(seq[i : i + 20])
         pam = reverse_complement(seq[i - 3 : i])
-        is_canonical = pam[1] == "G" and pam[2] == "G"
-        is_relaxed = pam[1] == "G" and pam[2] == "A"
-        if not (is_canonical or is_relaxed):
+        pam_classification = classify_pam(pam, preset.pamVariant)
+        if pam_classification is None:
             continue
 
         gc_count = sum(1 for b in spacer if b in ("G", "C"))
         gc_content = round((gc_count / 20) * 100)
 
         co_edited = list(seq)
-        for pos in range(4, 9):
+        for pos in range(window_start, window_end + 1):
             g_idx = (i + 19) - (pos - 1)
             if 0 <= g_idx < len(seq) and reverse_complement(seq[g_idx]) == target_base:
                 co_edited[g_idx] = sense_replacement
@@ -454,7 +521,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
         target_in_window = False
         target_pos_weight = 0.0
 
-        for pos in range(4, 9):
+        for pos in range(window_start, window_end + 1):
             g_idx = (i + 19) - (pos - 1)
             if g_idx < 0 or g_idx >= len(seq):
                 continue
@@ -495,7 +562,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
         has_sas_snp = (i - 3) <= preset.sasSnpIndex <= (i + 19)
         score, verdict = score_candidate_thermodynamic(
             spacer,
-            is_canonical,
+            pam_classification == "preferred",
             gc_content,
             target_in_window,
             target_pos_weight,
@@ -704,3 +771,49 @@ def calculate_batch_masses_endpoint(req: BatchMassRequest) -> BatchMassCalculati
 @app.get("/api/v1/immunology/epitopes", response_model=list[EpitopeHotspot])
 def get_epitopes() -> list[EpitopeHotspot]:
     return CAS9_EPITOPE_HOTSPOTS
+
+
+SOUTH_ASIAN_HLA_ALLELES: list[str] = sorted(
+    list({allele for ep in CAS9_EPITOPE_HOTSPOTS for allele in ep.hlaAlleles})
+)
+
+
+def filter_epitopes_by_hla_alleles(
+    selected_alleles: list[str],
+    epitopes: list[EpitopeHotspot] = CAS9_EPITOPE_HOTSPOTS,
+) -> list[EpitopeHotspot]:
+    selected = {allele.upper() for allele in selected_alleles}
+    if not selected:
+        return []
+    return [
+        ep for ep in epitopes
+        if any(allele.upper() in selected for allele in ep.hlaAlleles)
+    ]
+
+
+def calculate_hla_risk_score(
+    active_epitopes: list[EpitopeHotspot] = CAS9_EPITOPE_HOTSPOTS,
+    active_stealth_mutations: dict[str, bool] | None = None,
+) -> int:
+    if not active_epitopes:
+        return 0
+    if active_stealth_mutations is None:
+        active_stealth_mutations = {}
+    total = sum(
+        min(8, ep.bindingScore) if active_stealth_mutations.get(ep.peptide, False) else ep.bindingScore
+        for ep in active_epitopes
+    )
+    return round(total / len(active_epitopes))
+
+
+@app.get("/api/v1/immunology/alleles", response_model=list[str])
+def get_hla_alleles() -> list[str]:
+    return SOUTH_ASIAN_HLA_ALLELES
+
+
+@app.post("/api/v1/immunology/assess", response_model=HlaAssessmentResult)
+def assess_hla(req: HlaAssessmentRequest) -> HlaAssessmentResult:
+    relevant = filter_epitopes_by_hla_alleles(req.selectedAlleles, CAS9_EPITOPE_HOTSPOTS)
+    risk = calculate_hla_risk_score(relevant, req.activeStealthMutations)
+    return HlaAssessmentResult(patientRelevantEpitopes=relevant, residualRiskScore=risk)
+
