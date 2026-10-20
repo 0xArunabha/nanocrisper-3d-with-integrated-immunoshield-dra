@@ -54,31 +54,78 @@ export class LocalBioEngineService implements IBioEngineService {
 }
 
 /**
- * Blueprint for Year 2: Remote Python / PyTorch / BioPython Backend Service.
- * In Year 2, simply change the active service provider to an instance of this class!
- * The React UI will not require a single line of change.
- *
- * Example:
- * ```ts
- * export const activeEngine: IBioEngineService = new RemotePythonBioEngineService('http://localhost:8000/api/v1');
- * ```
+ * Hybrid Remote Python / FastAPI Adapter with Instant Local Fallback Cache.
+ * Communicates with http://localhost:8000/api/v1 while maintaining zero-latency
+ * synchronous compatibility for React concurrent rendering.
  */
 export class RemotePythonBioEngineService implements IBioEngineService {
   private baseUrl: string;
   private localFallback: LocalBioEngineService;
+  private guideCache: Map<string, GuideCandidate[]>;
+  private lnpCache: Map<string, LnpBiophysicsResult>;
 
   constructor(baseUrl: string = 'http://localhost:8000/api/v1') {
     this.baseUrl = baseUrl;
     this.localFallback = new LocalBioEngineService();
+    this.guideCache = new Map();
+    this.lnpCache = new Map();
   }
 
   getBaseUrl(): string {
     return this.baseUrl;
   }
 
+  async checkHealth(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/health`, { method: 'GET' });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async fetchScanGuides(preset: GenePreset): Promise<GuideCandidate[]> {
+    const cacheKey = `${preset.id}:${preset.editorType}:${preset.mutationIndex}:${preset.sequence}`;
+    try {
+      const res = await fetch(`${this.baseUrl}/crispr/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(preset)
+      });
+      if (res.ok) {
+        const data = (await res.json()) as GuideCandidate[];
+        this.guideCache.set(cacheKey, data);
+        return data;
+      }
+    } catch {
+      // Offline fallback to local engine
+    }
+    return this.localFallback.scanGuides(preset);
+  }
+
+  async fetchLnpBiophysics(form: LnpFormulation): Promise<LnpBiophysicsResult> {
+    const cacheKey = JSON.stringify(form);
+    try {
+      const res = await fetch(`${this.baseUrl}/nanotech/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form)
+      });
+      if (res.ok) {
+        const data = (await res.json()) as LnpBiophysicsResult;
+        this.lnpCache.set(cacheKey, data);
+        return data;
+      }
+    } catch {
+      // Offline fallback to local engine
+    }
+    return this.localFallback.simulateLnpBiophysics(form);
+  }
+
   scanGuides(preset: GenePreset): GuideCandidate[] {
-    // In Year 2: return await fetch(`${this.baseUrl}/crispr/scan`, { method: 'POST', body: JSON.stringify(preset) }).then(r => r.json());
-    // Fallback to local heuristic if offline
+    const cacheKey = `${preset.id}:${preset.editorType}:${preset.mutationIndex}:${preset.sequence}`;
+    const cached = this.guideCache.get(cacheKey);
+    if (cached) return cached;
     return this.localFallback.scanGuides(preset);
   }
 
@@ -87,11 +134,17 @@ export class RemotePythonBioEngineService implements IBioEngineService {
   }
 
   simulateLnpBiophysics(form: LnpFormulation): LnpBiophysicsResult {
-    // In Year 2: calls Python GROMACS / PyTorch surrogate model
+    const cacheKey = JSON.stringify(form);
+    const cached = this.lnpCache.get(cacheKey);
+    if (cached) return cached;
     return this.localFallback.simulateLnpBiophysics(form);
   }
 
-  calculateBatchMasses(form: LnpFormulation, targetVolumeMl?: number, mrnaConcMgMl?: number): BatchMassCalculation {
+  calculateBatchMasses(
+    form: LnpFormulation,
+    targetVolumeMl?: number,
+    mrnaConcMgMl?: number
+  ): BatchMassCalculation {
     return this.localFallback.calculateBatchMasses(form, targetVolumeMl, mrnaConcMgMl);
   }
 
@@ -109,4 +162,5 @@ export class RemotePythonBioEngineService implements IBioEngineService {
 }
 
 // Export default singleton instance
-export const bioEngineService: IBioEngineService = new LocalBioEngineService();
+export const remoteBioEngineService = new RemotePythonBioEngineService('http://localhost:8000/api/v1');
+export const bioEngineService: IBioEngineService = remoteBioEngineService;

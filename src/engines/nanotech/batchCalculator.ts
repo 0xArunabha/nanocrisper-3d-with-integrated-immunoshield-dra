@@ -11,12 +11,16 @@ export function calculateBatchMasses(
   targetVolumeMl: number = 10,
   mrnaConcMgMl: number = 1.0
 ): BatchMassCalculation {
-  const totalMrnaMassMg = Number((targetVolumeMl * mrnaConcMgMl).toFixed(2));
+  const safeVolumeMl = Math.max(0.1, targetVolumeMl);
+  const safeMrnaConc = Math.max(0.01, mrnaConcMgMl);
+  const safeIonizablePct = Math.max(1.0, form.ionizableLipid);
+
+  const totalMrnaMassMg = Number((safeVolumeMl * safeMrnaConc).toFixed(2));
   // Moles of phosphate (avg nucleotide MW in mRNA is ~330 g/mol)
   const mmolesPhosphate = totalMrnaMassMg / 330;
   // Required moles of ionizable nitrogen based on N/P ratio
   const mmolesIonizable = mmolesPhosphate * form.npRatio;
-  const totalLipidMmoles = mmolesIonizable / (form.ionizableLipid / 100);
+  const totalLipidMmoles = mmolesIonizable / (safeIonizablePct / 100);
 
   const MW_IONIZABLE = 710.2;
   const MW_DSPC = 790.15;
@@ -33,11 +37,11 @@ export function calculateBatchMasses(
   const massPeg = Number((mmolesPeg * MW_PEG).toFixed(2));
   const totalLipidMassMg = Number((massIonizable + massDspc + massChol + massPeg).toFixed(2));
 
-  const volLiters = targetVolumeMl / 1000;
+  const volLiters = safeVolumeMl / 1000;
 
   return {
-    targetVolumeMl,
-    mrnaConcMgMl,
+    targetVolumeMl: safeVolumeMl,
+    mrnaConcMgMl: safeMrnaConc,
     totalMrnaMassMg,
     totalLipidMassMg,
     components: [

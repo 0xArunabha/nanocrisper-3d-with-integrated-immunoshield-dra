@@ -1,0 +1,706 @@
+# backend/main.py
+"""
+NanoCRISPR-3D & ImmunoShield-DRA — Python Computational Biology Backend
+Author: Arunabha Ghosh (MAKAUT)
+License: Apache-2.0
+"""
+
+from __future__ import annotations
+import math
+from typing import Literal
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+app = FastAPI(
+    title="NanoCRISPR-3D Bio-Engine API",
+    version="1.0.0",
+    description="Thermodynamic CRISPR base editing, LNP biophysics, and South Asian HLA de-immunization engine.",
+)
+
+# Enable CORS for Vite local dev server (ports 5173 / 4173)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================================================
+# 1. DOMAIN SCHEMAS (Strictly aligned with src/engines/types.ts)
+# ============================================================================
+
+
+class GenePreset(BaseModel):
+    id: str
+    symbol: str
+    name: str
+    disease: str
+    targetOrgan: Literal["Liver", "Bone Marrow (HSPC)", "Lung"]
+    editorType: Literal["ABE8e (A→G)", "BE4max (C→T)"]
+    sequence: str
+    mutationIndex: int
+    sasSnpIndex: int
+    sasSnpId: str
+    sasAlleleFreq: float
+    clinicalNote: str
+
+
+class BystanderEdit(BaseModel):
+    guidePos: int
+    genomicIndex: int
+    originalCodon: str
+    editedCodon: str
+    originalAA: str
+    editedAA: str
+    classification: Literal[
+        "Target Edit",
+        "Silent (Synonymous)",
+        "Missense (Pathogenic Risk)",
+        "Nonsense (Premature Stop)",
+    ]
+
+
+class GuideCandidate(BaseModel):
+    id: str
+    spacer: str
+    pam: str
+    strand: Literal["+", "-"]
+    startIndex: int
+    gcContent: int
+    targetInWindow: bool
+    bystanders: list[BystanderEdit]
+    hasSasSnpCollision: bool
+    CompositeScore: int
+    verdict: Literal[
+        "Optimal Clinical Guide",
+        "Safe (Silent Bystander)",
+        "High Risk (Bystander/SNP)",
+        "Low Efficiency",
+    ]
+
+
+class LnpFormulation(BaseModel):
+    ionizableLipid: float
+    dspcHelper: float
+    cholesterol: float
+    pegLipid: float
+    lipidPka: float
+    npRatio: float
+
+
+class OrganTropism(BaseModel):
+    liver: int
+    spleen: int
+    lungs: int
+
+
+class LnpBiophysicsResult(BaseModel):
+    diameterNm: int
+    pdi: float
+    zetaPotentialMv: float
+    endosomalProtonationPct: int
+    bloodProtonationPct: int
+    endosomalEscapeEfficiency: int
+    cellularUptakeScore: int
+    deGennesRfOverD: float
+    criticalPackingParam: float
+    saxsBraggSpacingNm: float
+    organTropism: OrganTropism
+    stabilityStatus: Literal[
+        "Optimal Clinical LNP",
+        "PEG Stealth Dilemma (Low Uptake)",
+        "Aggregation Risk (Too Large)",
+        "Poor Endosomal Escape",
+    ]
+
+
+class ComponentMass(BaseModel):
+    name: str
+    role: str
+    molarPct: float
+    mw: float
+    massMg: float
+    molarConcMm: float
+
+
+class BatchMassCalculation(BaseModel):
+    targetVolumeMl: float
+    mrnaConcMgMl: float
+    totalMrnaMassMg: float
+    totalLipidMassMg: float
+    components: list[ComponentMass]
+
+
+class BatchMassRequest(BaseModel):
+    form: LnpFormulation
+    targetVolumeMl: float = 10.0
+    mrnaConcMgMl: float = 1.0
+
+
+class EpitopeHotspot(BaseModel):
+    peptide: str
+    residueRange: str
+    domain: str
+    hlaAllele: str
+    bindingScore: int
+    stealthMutation: str
+    catalyticSafe: bool
+
+
+# ============================================================================
+# 2. BIOCHEMICAL CONSTANTS & THERMODYNAMIC TABLES
+# ============================================================================
+
+CODON_TABLE: dict[str, str] = {
+    "TTT": "F", "TTC": "F", "TTA": "L", "TTG": "L", "CTT": "L", "CTC": "L", "CTA": "L", "CTG": "L",
+    "ATT": "I", "ATC": "I", "ATA": "I", "ATG": "M", "GTT": "V", "GTC": "V", "GTA": "V", "GTG": "V",
+    "TCT": "S", "TCC": "S", "TCA": "S", "TCG": "S", "CCT": "P", "CCC": "P", "CCA": "P", "CCG": "P",
+    "ACT": "T", "ACC": "T", "ACA": "T", "ACG": "T", "GCT": "A", "GCC": "A", "GCA": "A", "GCG": "A",
+    "TAT": "Y", "TAC": "Y", "TAA": "*", "TAG": "*", "CAT": "H", "CAC": "H", "CAA": "Q", "CAG": "Q",
+    "AAT": "N", "AAC": "N", "AAA": "K", "AAG": "K", "GAT": "D", "GAC": "D", "GAA": "E", "GAG": "E",
+    "TGT": "C", "TGC": "C", "TGA": "*", "TGG": "W", "CGT": "R", "CGC": "R", "CGA": "R", "CGG": "R",
+    "AGT": "S", "AGC": "S", "AGA": "R", "AGG": "R", "GGT": "G", "GGC": "G", "GGA": "G", "GGG": "G",
+}
+
+# Sugimoto et al. (1995) RNA:DNA hybrid nearest-neighbor free energy parameters (dG_37 in kcal/mol)
+RNA_DNA_DG37: dict[str, float] = {
+    "AA": -1.0, "AT": -0.9, "AC": -2.1, "AG": -1.8,
+    "TA": -0.9, "TT": -0.2, "TC": -1.5, "TG": -1.6,
+    "CA": -1.7, "CT": -0.9, "CC": -2.1, "CG": -2.7,
+    "GA": -1.5, "GT": -1.1, "GC": -2.7, "GG": -2.9,
+}
+
+# Empirical positional activity weights inside window 4..8 for ABE8e vs BE4max
+ABE8E_POS_WEIGHTS: dict[int, float] = {4: 0.78, 5: 1.00, 6: 1.00, 7: 0.92, 8: 0.68}
+BE4MAX_POS_WEIGHTS: dict[int, float] = {4: 0.88, 5: 0.98, 6: 1.00, 7: 0.86, 8: 0.62}
+
+CAS9_EPITOPE_HOTSPOTS: list[EpitopeHotspot] = [
+    EpitopeHotspot(
+        peptide="NLIALSLGL",
+        residueRange="aa 236–244",
+        domain="REC2 Domain",
+        hlaAllele="HLA-A*02:01 / HLA-A*24:02 (Common Indian)",
+        bindingScore=92,
+        stealthMutation="L240T (Disrupts MHC-I anchor pocket B without touching DNA groove)",
+        catalyticSafe=True,
+    ),
+    EpitopeHotspot(
+        peptide="KTYAHLFDD",
+        residueRange="aa 836–844",
+        domain="HNH Catalytic Core (Contains H840)",
+        hlaAllele="HLA-A*11:01 (High South Asian Frequency ~21%)",
+        bindingScore=84,
+        stealthMutation="K836R (Preserves H840 active-site histidine required for strand nicking)",
+        catalyticSafe=True,
+    ),
+    EpitopeHotspot(
+        peptide="IYLAAANRL",
+        residueRange="aa 1012–1020",
+        domain="RuvC-III Domain",
+        hlaAllele="HLA-A*24:02 (South Asian Frequency ~18%)",
+        bindingScore=88,
+        stealthMutation="L1020G (Eliminates C-terminal anchor binding to HLA groove)",
+        catalyticSafe=True,
+    ),
+    EpitopeHotspot(
+        peptide="FEDFLKNRM",
+        residueRange="aa 418–426",
+        domain="Bridge Helix (Structural Stability)",
+        hlaAllele="HLA-B*40:06 (High Dravidian / SAS Frequency ~14%)",
+        bindingScore=81,
+        stealthMutation="F421A (Masks hydrophobic anchor while preserving alpha-helical backbone)",
+        catalyticSafe=True,
+    ),
+    EpitopeHotspot(
+        peptide="TLYETRRDL",
+        residueRange="aa 674–682",
+        domain="REC3 Domain (Target RNA Alignment)",
+        hlaAllele="HLA-B*15:02 (High Indo-Aryan SAS Frequency ~12%)",
+        bindingScore=78,
+        stealthMutation="L675S (Ablates C-terminal peptide binding to MHC cleft)",
+        catalyticSafe=True,
+    ),
+]
+
+
+def reverse_complement(seq: str) -> str:
+    comp = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
+    return "".join(comp.get(b, b) for b in reversed(seq.upper()))
+
+
+def calc_rna_dna_dg37(spacer: str) -> float:
+    """Computes nearest-neighbor RNA:DNA hybrid stability (kcal/mol at 37°C)."""
+    dg = 1.9  # Helix initiation penalty
+    for k in range(len(spacer) - 1):
+        dinuc = spacer[k : k + 2]
+        dg += RNA_DNA_DG37.get(dinuc, -1.4)
+    return round(dg, 2)
+
+
+def score_candidate_thermodynamic(
+    spacer: str,
+    is_canonical_pam: bool,
+    gc_content: int,
+    target_in_window: bool,
+    target_pos_weight: float,
+    edits: list[BystanderEdit],
+    has_sas_snp: bool,
+) -> tuple[int, Literal["Optimal Clinical Guide", "Safe (Silent Bystander)", "High Risk (Bystander/SNP)", "Low Efficiency"]]:
+    score = 65.0 if is_canonical_pam else 48.0
+
+    # 1. Nearest-Neighbor RNA:DNA Hybridization Free Energy Bonus
+    # Optimal R-loop invasion occurs around dG_37 in [-34.0, -24.0] kcal/mol
+    dg37 = calc_rna_dna_dg37(spacer)
+    if -34.5 <= dg37 <= -24.0 and 40 <= gc_content <= 60:
+        score += 16.0
+    elif 35 <= gc_content <= 65:
+        score += 9.0
+    else:
+        score -= 10.0
+
+    # 2. Seed Region (positions 13-20 proximal to PAM) G/C nucleation stability
+    seed_gc = sum(1 for b in spacer[12:20] if b in ("G", "C"))
+    if 3 <= seed_gc <= 6:
+        score += 4.0
+
+    # 3. Empirical Deaminase Positional Efficiency
+    if target_in_window:
+        score += 32.0 + (target_pos_weight * 8.0)
+    else:
+        score -= 25.0
+
+    # 4. U6 Pol III termination check (TTTT)
+    has_pol_iii_stop = "TTTT" in spacer
+    if has_pol_iii_stop:
+        score -= 30.0
+
+    # 5. Bystander Codon Consequence Penalties
+    has_harmful_bystander = False
+    has_silent_bystander = False
+    for e in edits:
+        if e.classification == "Nonsense (Premature Stop)":
+            score -= 45.0
+            has_harmful_bystander = True
+        elif e.classification == "Missense (Pathogenic Risk)":
+            score -= 25.0
+            has_harmful_bystander = True
+        elif e.classification == "Silent (Synonymous)":
+            score += 4.0
+            has_silent_bystander = True
+
+    if has_sas_snp:
+        score -= 20.0
+
+    final_score = max(5, min(99, round(score)))
+
+    verdict: Literal[
+        "Optimal Clinical Guide",
+        "Safe (Silent Bystander)",
+        "High Risk (Bystander/SNP)",
+        "Low Efficiency",
+    ] = "Low Efficiency"
+
+    if target_in_window and not has_harmful_bystander and not has_sas_snp and not has_pol_iii_stop:
+        verdict = "Safe (Silent Bystander)" if has_silent_bystander else "Optimal Clinical Guide"
+    elif has_harmful_bystander or has_sas_snp:
+        verdict = "High Risk (Bystander/SNP)"
+
+    return final_score, verdict
+
+
+# ============================================================================
+# 3. API ENDPOINTS
+# ============================================================================
+
+
+@app.get("/api/v1/health")
+def health_check():
+    return {
+        "status": "online",
+        "engine": "NanoCRISPR-3D Python FastAPI Bio-Engine",
+        "modules": [
+            "RNA:DNA Sugimoto Nearest-Neighbor Thermodynamics",
+            "ABE8e/BE4max Empirical Positional Activity",
+            "Israelachvili CPP & De Gennes LNP Biophysics",
+            "ImmunoShield South Asian MHC-I Panel",
+        ],
+    }
+
+
+@app.post("/api/v1/crispr/scan", response_model=list[GuideCandidate])
+def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
+    seq = preset.sequence.upper()
+    is_abe = preset.editorType.startswith("ABE")
+    target_base = "A" if is_abe else "C"
+    replacement_base = "G" if is_abe else "T"
+    pos_weights = ABE8E_POS_WEIGHTS if is_abe else BE4MAX_POS_WEIGHTS
+
+    candidates: list[GuideCandidate] = []
+
+    # 1. Sense (+) Strand Scan
+    for i in range(0, len(seq) - 22):
+        spacer = seq[i : i + 20]
+        pam = seq[i + 20 : i + 23]
+        is_canonical = pam[1] == "G" and pam[2] == "G"
+        is_relaxed = pam[1] == "G" and pam[2] == "A"
+        if not (is_canonical or is_relaxed):
+            continue
+
+        gc_count = sum(1 for b in spacer if b in ("G", "C"))
+        gc_content = round((gc_count / 20) * 100)
+
+        # Processive co-editing across window 4..8
+        co_edited = list(seq)
+        for pos in range(4, 9):
+            g_idx = i + (pos - 1)
+            if 0 <= g_idx < len(seq) and seq[g_idx] == target_base:
+                co_edited[g_idx] = replacement_base
+        co_edited_seq = "".join(co_edited)
+
+        edits: list[BystanderEdit] = []
+        target_in_window = False
+        target_pos_weight = 0.0
+
+        for pos in range(4, 9):
+            g_idx = i + (pos - 1)
+            if g_idx < 0 or g_idx >= len(seq):
+                continue
+            if seq[g_idx] == target_base:
+                codon_start = (g_idx // 3) * 3
+                orig_codon = seq[codon_start : codon_start + 3]
+                if len(orig_codon) < 3:
+                    continue
+                edit_codon = co_edited_seq[codon_start : codon_start + 3]
+                orig_aa = CODON_TABLE.get(orig_codon, "?")
+                edit_aa = CODON_TABLE.get(edit_codon, "?")
+
+                is_target = g_idx == preset.mutationIndex
+                if is_target:
+                    target_in_window = True
+                    target_pos_weight = pos_weights.get(pos, 0.8)
+
+                classification: BystanderEdit.__annotations__["classification"] = (
+                    "Missense (Pathogenic Risk)"
+                )
+                if is_target:
+                    classification = "Target Edit"
+                elif edit_aa == "*":
+                    classification = "Nonsense (Premature Stop)"
+                elif orig_aa == edit_aa:
+                    classification = "Silent (Synonymous)"
+
+                edits.append(
+                    BystanderEdit(
+                        guidePos=pos,
+                        genomicIndex=g_idx,
+                        originalCodon=orig_codon,
+                        editedCodon=edit_codon,
+                        originalAA=orig_aa,
+                        editedAA=edit_aa,
+                        classification=classification,
+                    )
+                )
+
+        has_sas_snp = i <= preset.sasSnpIndex <= (i + 22)
+        score, verdict = score_candidate_thermodynamic(
+            spacer,
+            is_canonical,
+            gc_content,
+            target_in_window,
+            target_pos_weight,
+            edits,
+            has_sas_snp,
+        )
+
+        candidates.append(
+            GuideCandidate(
+                id=f"sgRNA-f{i + 1}",
+                spacer=spacer,
+                pam=pam,
+                strand="+",
+                startIndex=i,
+                gcContent=gc_content,
+                targetInWindow=target_in_window,
+                bystanders=edits,
+                hasSasSnpCollision=has_sas_snp,
+                CompositeScore=score,
+                verdict=verdict,
+            )
+        )
+
+    # 2. Antisense (-) Strand Scan (3' PAM at sense indices i-3 .. i-1)
+    sense_replacement = "C" if target_base == "A" else "A"
+    for i in range(3, len(seq) - 19):
+        spacer = reverse_complement(seq[i : i + 20])
+        pam = reverse_complement(seq[i - 3 : i])
+        is_canonical = pam[1] == "G" and pam[2] == "G"
+        is_relaxed = pam[1] == "G" and pam[2] == "A"
+        if not (is_canonical or is_relaxed):
+            continue
+
+        gc_count = sum(1 for b in spacer if b in ("G", "C"))
+        gc_content = round((gc_count / 20) * 100)
+
+        co_edited = list(seq)
+        for pos in range(4, 9):
+            g_idx = (i + 19) - (pos - 1)
+            if 0 <= g_idx < len(seq) and reverse_complement(seq[g_idx]) == target_base:
+                co_edited[g_idx] = sense_replacement
+        co_edited_seq = "".join(co_edited)
+
+        edits = []
+        target_in_window = False
+        target_pos_weight = 0.0
+
+        for pos in range(4, 9):
+            g_idx = (i + 19) - (pos - 1)
+            if g_idx < 0 or g_idx >= len(seq):
+                continue
+            if reverse_complement(seq[g_idx]) == target_base:
+                codon_start = (g_idx // 3) * 3
+                orig_codon = seq[codon_start : codon_start + 3]
+                if len(orig_codon) < 3:
+                    continue
+                edit_codon = co_edited_seq[codon_start : codon_start + 3]
+                orig_aa = CODON_TABLE.get(orig_codon, "?")
+                edit_aa = CODON_TABLE.get(edit_codon, "?")
+
+                is_target = g_idx == preset.mutationIndex
+                if is_target:
+                    target_in_window = True
+                    target_pos_weight = pos_weights.get(pos, 0.8)
+
+                classification = "Missense (Pathogenic Risk)"
+                if is_target:
+                    classification = "Target Edit"
+                elif edit_aa == "*":
+                    classification = "Nonsense (Premature Stop)"
+                elif orig_aa == edit_aa:
+                    classification = "Silent (Synonymous)"
+
+                edits.append(
+                    BystanderEdit(
+                        guidePos=pos,
+                        genomicIndex=g_idx,
+                        originalCodon=orig_codon,
+                        editedCodon=edit_codon,
+                        originalAA=orig_aa,
+                        editedAA=edit_aa,
+                        classification=classification,
+                    )
+                )
+
+        has_sas_snp = (i - 3) <= preset.sasSnpIndex <= (i + 19)
+        score, verdict = score_candidate_thermodynamic(
+            spacer,
+            is_canonical,
+            gc_content,
+            target_in_window,
+            target_pos_weight,
+            edits,
+            has_sas_snp,
+        )
+
+        candidates.append(
+            GuideCandidate(
+                id=f"sgRNA-r{i + 1}",
+                spacer=spacer,
+                pam=pam,
+                strand="-",
+                startIndex=i,
+                gcContent=gc_content,
+                targetInWindow=target_in_window,
+                bystanders=edits,
+                hasSasSnpCollision=has_sas_snp,
+                CompositeScore=score,
+                verdict=verdict,
+            )
+        )
+
+    candidates.sort(key=lambda c: c.CompositeScore, reverse=True)
+    return candidates[:10]
+
+
+@app.post("/api/v1/nanotech/simulate", response_model=LnpBiophysicsResult)
+def simulate_lnp(form: LnpFormulation) -> LnpBiophysicsResult:
+    raw_total = form.ionizableLipid + form.dspcHelper + form.cholesterol + form.pegLipid
+    total = raw_total if raw_total > 0 else 100.0
+
+    norm_ion = (form.ionizableLipid / total) * 100.0
+    norm_dspc = (form.dspcHelper / total) * 100.0
+    norm_chol = (form.cholesterol / total) * 100.0
+    norm_peg = max(0.1, (form.pegLipid / total) * 100.0)
+
+    # 1. Hydrodynamic diameter (Dh in nm) via surface curvature & N/P compaction
+    raw_dh = (
+        135.0
+        - 24.0 * math.log(max(0.3, norm_peg * 2.2))
+        + (6.0 - form.npRatio) * 3.5
+        + (norm_dspc - 10.0) * 0.45
+    )
+    diameter_nm = round(max(42.0, min(210.0, raw_dh)))
+
+    # 2. Polydispersity Index (PDI)
+    chol_dev = abs(norm_chol - 38.5) * 0.004
+    dspc_dev = abs(norm_dspc - 10.0) * 0.0025
+    low_peg_pen = 0.12 if norm_peg < 1.0 else 0.0
+    pdi = round(min(0.45, 0.06 + chol_dev + dspc_dev + low_peg_pen), 2)
+
+    # 3. Henderson-Hasselbalch Ionization
+    endosomal_prot = round(100.0 / (1.0 + math.pow(10.0, 5.5 - form.lipidPka)))
+    blood_prot = round(100.0 / (1.0 + math.pow(10.0, 7.4 - form.lipidPka)))
+
+    # 4. Zeta potential at pH 7.4 (mV)
+    zeta_mv = round((blood_prot * 0.35) - (norm_peg * 2.1), 1)
+
+    # 5. De Gennes Polymer Brush Scaling & ApoE Opsonization
+    peg_mol_frac = max(0.002, norm_peg / 100.0)
+    grafting_dist_d = math.sqrt(0.65 / peg_mol_frac)
+    rf_over_d = round(3.43 / grafting_dist_d, 2)
+
+    peg_penalty = (
+        max(10.0, 100.0 - math.pow(norm_peg - 2.0, 1.8) * 18.0)
+        if norm_peg > 2.2
+        else 95.0
+    )
+    cellular_uptake = round(min(98.0, max(8.0, peg_penalty)))
+
+    # 6. Israelachvili Critical Packing Parameter: CPP = v / (a_0(pH) * l_c)
+    # Branched ionizable tail volume v ~ 1.18 nm^3, l_c ~ 1.65 nm; ion-pairing shrinks a_0 at pH 5.5
+    cpp_ph55 = round(
+        1.08 + (endosomal_prot / 100.0) * 0.58 + (norm_ion - 50.0) * 0.002,
+        2,
+    )
+
+    # 7. Endosomal Escape Efficiency
+    pka_sweet_spot = max(0.0, 100.0 - abs(form.lipidPka - 6.35) * 55.0)
+    escape_eff = round(
+        min(
+            99.0,
+            max(
+                5.0,
+                endosomal_prot * 0.4 + pka_sweet_spot * 0.35 + cellular_uptake * 0.25,
+            ),
+        )
+    )
+
+    # 8. Bounded SORT Organ Tropism (Liver + Spleen + Lungs == 100%)
+    liver, spleen, lungs = 78, 15, 7
+    if form.lipidPka > 6.7 or zeta_mv > 8.0:
+        pka_shift = max(0.0, (form.lipidPka - 6.5) * 45.0)
+        zeta_shift = max(0.0, (zeta_mv - 5.0) * 2.2)
+        lungs = min(68, max(12, round(15.0 + pka_shift + zeta_shift)))
+        liver = max(20, 78 - lungs)
+        spleen = max(4, 100 - liver - lungs)
+        liver = 100 - lungs - spleen
+    elif form.lipidPka < 6.0 or zeta_mv < -5.0:
+        pka_shift = max(0.0, (6.2 - form.lipidPka) * 50.0)
+        anionic_shift = max(0.0, (-4.0 - zeta_mv) * 3.5)
+        spleen = min(62, max(18, round(20.0 + pka_shift + anionic_shift)))
+        liver = max(25, 82 - spleen)
+        lungs = max(4, 100 - liver - spleen)
+        liver = 100 - spleen - lungs
+
+    stability: LnpBiophysicsResult.__annotations__["stabilityStatus"] = (
+        "Optimal Clinical LNP"
+    )
+    if norm_peg > 3.2:
+        stability = "PEG Stealth Dilemma (Low Uptake)"
+    elif diameter_nm > 140 or norm_peg < 0.8:
+        stability = "Aggregation Risk (Too Large)"
+    elif escape_eff < 58:
+        stability = "Poor Endosomal Escape"
+
+    saxs_spacing = round(6.45 - (form.npRatio - 3.0) * 0.08, 2)
+
+    return LnpBiophysicsResult(
+        diameterNm=diameter_nm,
+        pdi=pdi,
+        zetaPotentialMv=zeta_mv,
+        endosomalProtonationPct=endosomal_prot,
+        bloodProtonationPct=blood_prot,
+        endosomalEscapeEfficiency=escape_eff,
+        cellularUptakeScore=cellular_uptake,
+        deGennesRfOverD=rf_over_d,
+        criticalPackingParam=cpp_ph55,
+        saxsBraggSpacingNm=saxs_spacing,
+        organTropism=OrganTropism(liver=liver, spleen=spleen, lungs=lungs),
+        stabilityStatus=stability,
+    )
+
+
+@app.post("/api/v1/nanotech/batch", response_model=BatchMassCalculation)
+def calculate_batch_masses_endpoint(req: BatchMassRequest) -> BatchMassCalculation:
+    safe_vol = max(0.1, req.targetVolumeMl)
+    safe_mrna_conc = max(0.01, req.mrnaConcMgMl)
+    safe_ionizable = max(1.0, req.form.ionizableLipid)
+
+    total_mrna_mass_mg = round(safe_vol * safe_mrna_conc, 2)
+    mmoles_phosphate = total_mrna_mass_mg / 330.0
+    mmoles_ionizable = mmoles_phosphate * req.form.npRatio
+    total_lipid_mmoles = mmoles_ionizable / (safe_ionizable / 100.0)
+
+    mw_ionizable = 710.2
+    mw_dspc = 790.15
+    mw_chol = 386.65
+    mw_peg = 2509.2
+
+    mmoles_dspc = total_lipid_mmoles * (req.form.dspcHelper / 100.0)
+    mmoles_chol = total_lipid_mmoles * (req.form.cholesterol / 100.0)
+    mmoles_peg = total_lipid_mmoles * (req.form.pegLipid / 100.0)
+
+    mass_ionizable = round(mmoles_ionizable * mw_ionizable, 2)
+    mass_dspc = round(mmoles_dspc * mw_dspc, 2)
+    mass_chol = round(mmoles_chol * mw_chol, 2)
+    mass_peg = round(mmoles_peg * mw_peg, 2)
+    total_lipid_mass_mg = round(mass_ionizable + mass_dspc + mass_chol + mass_peg, 2)
+
+    vol_liters = safe_vol / 1000.0
+
+    return BatchMassCalculation(
+        targetVolumeMl=safe_vol,
+        mrnaConcMgMl=safe_mrna_conc,
+        totalMrnaMassMg=total_mrna_mass_mg,
+        totalLipidMassMg=total_lipid_mass_mg,
+        components=[
+            ComponentMass(
+                name="Ionizable Lipid (SM-102 proxy)",
+                role="mRNA complexation & endosomal escape",
+                molarPct=req.form.ionizableLipid,
+                mw=mw_ionizable,
+                massMg=mass_ionizable,
+                molarConcMm=round(mmoles_ionizable / vol_liters, 2),
+            ),
+            ComponentMass(
+                name="DSPC (Helper Lipid)",
+                role="Bilayer structural support",
+                molarPct=req.form.dspcHelper,
+                mw=mw_dspc,
+                massMg=mass_dspc,
+                molarConcMm=round(mmoles_dspc / vol_liters, 2),
+            ),
+            ComponentMass(
+                name="Cholesterol",
+                role="Membrane fluidity & particle rigidity",
+                molarPct=req.form.cholesterol,
+                mw=mw_chol,
+                massMg=mass_chol,
+                molarConcMm=round(mmoles_chol / vol_liters, 2),
+            ),
+            ComponentMass(
+                name="DMG-PEG2000 (Stealth Lipid)",
+                role="Colloidal stability & steric hindrance",
+                molarPct=req.form.pegLipid,
+                mw=mw_peg,
+                massMg=mass_peg,
+                molarConcMm=round(mmoles_peg / vol_liters, 2),
+            ),
+        ],
+    )
+
+
+@app.get("/api/v1/immunology/epitopes", response_model=list[EpitopeHotspot])
+def get_epitopes() -> list[EpitopeHotspot]:
+    return CAS9_EPITOPE_HOTSPOTS

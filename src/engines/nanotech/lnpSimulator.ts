@@ -3,28 +3,31 @@ import type { LnpFormulation, LnpBiophysicsResult } from '../types';
 
 /**
  * Nanotech LNP Biophysical & CMC Simulation Engine.
- * Models multi-component lipid nanoparticle assembly:
- * - Hydrodynamic diameter ($D_h$) from PEG-lipid surface curvature constraints
- * - Polydispersity index (PDI)
- * - Henderson-Hasselbalch protonation at systemic pH 7.4 vs. endosomal pH 5.5
- * - Zeta potential ($\zeta$) in mV
- * - De Gennes polymer brush regime ($R_F / D$)
- * - Israelachvili Critical Packing Parameter (CPP) for lamellar-to-inverted-hexagonal ($H_{\text{II}}$) transition
- * - SAXS core Bragg diffraction repeat distance ($d_{\text{SAXS}}$)
- * - Cellular uptake score (modelling the "PEG Dilemma" & ApoE adsorption)
- * - SORT (Selective Organ Targeting) biodistribution
+ * Models 4-component lipid nanoparticle assembly, Henderson-Hasselbalch ionization,
+ * De Gennes polymer brush scaling, Israelachvili Critical Packing Parameter (CPP),
+ * SAXS Bragg repeat distance, and SORT organ biodistribution.
  */
 export function simulateLnpBiophysics(form: LnpFormulation): LnpBiophysicsResult {
-  const total = form.ionizableLipid + form.dspcHelper + form.cholesterol + form.pegLipid;
-  const normPeg = (form.pegLipid / total) * 100;
+  const rawTotal = form.ionizableLipid + form.dspcHelper + form.cholesterol + form.pegLipid;
+  const total = rawTotal > 0 ? rawTotal : 100;
+
+  const normDspc = (form.dspcHelper / total) * 100;
   const normChol = (form.cholesterol / total) * 100;
+  const normPeg = Math.max(0.1, (form.pegLipid / total) * 100);
 
   // 1. Hydrodynamic diameter (Dh in nm): Higher PEG-lipid increases surface curvature -> smaller particle
-  const rawDiameter = 135 - 24 * Math.log(Math.max(0.3, normPeg * 2.2)) + (6 - form.npRatio) * 3.5;
+  const rawDiameter =
+    135 -
+    24 * Math.log(Math.max(0.3, normPeg * 2.2)) +
+    (6 - form.npRatio) * 3.5 +
+    (normDspc - 10) * 0.45;
   const diameterNm = Math.round(Math.max(42, Math.min(210, rawDiameter)));
 
   // 2. Polydispersity Index (PDI)
-  const pdi = Number((0.06 + Math.abs(normChol - 38.5) * 0.004 + (normPeg < 1.0 ? 0.12 : 0)).toFixed(2));
+  const cholDeviation = Math.abs(normChol - 38.5) * 0.004;
+  const dspcDeviation = Math.abs(normDspc - 10.0) * 0.0025;
+  const lowPegPenalty = normPeg < 1.0 ? 0.12 : 0;
+  const pdi = Number(Math.min(0.45, 0.06 + cholDeviation + dspcDeviation + lowPegPenalty).toFixed(2));
 
   // 3. Henderson-Hasselbalch Ionization: % = 100 / (1 + 10^(pH - pKa))
   const endosomalProtonationPct = Math.round(100 / (1 + Math.pow(10, 5.5 - form.lipidPka)));
@@ -37,25 +40,34 @@ export function simulateLnpBiophysics(form: LnpFormulation): LnpBiophysicsResult
   const pegPenalty = normPeg > 2.2 ? Math.max(10, 100 - Math.pow(normPeg - 2.0, 1.8) * 18) : 95;
   const cellularUptakeScore = Math.round(Math.min(98, Math.max(8, pegPenalty)));
 
-  // 6. Endosomal Escape combines protonation at pH 5.5 + neutral charge at pH 7.4 + low PEG barrier
+  // 6. Endosomal Escape combines protonation at pH 5.5 + pKa sweet spot + low PEG barrier
   const pkaSweetSpotBonus = Math.max(0, 100 - Math.abs(form.lipidPka - 6.35) * 55);
   const endosomalEscapeEfficiency = Math.round(
-    (endosomalProtonationPct * 0.4 + pkaSweetSpotBonus * 0.35 + cellularUptakeScore * 0.25)
+    Math.min(
+      99,
+      Math.max(5, endosomalProtonationPct * 0.4 + pkaSweetSpotBonus * 0.35 + cellularUptakeScore * 0.25)
+    )
   );
 
-  // 7. Organ Tropism (SORT - Selective Organ Targeting model)
+  // 7. Organ Tropism (SORT - Selective Organ Targeting model with strict non-negative conservation)
   let liver = 78;
   let spleen = 15;
   let lungs = 7;
 
   if (form.lipidPka > 6.7 || zetaPotentialMv > 8) {
-    lungs = Math.min(68, Math.round(15 + (form.lipidPka - 6.5) * 45));
-    liver = Math.max(20, 90 - lungs - 12);
-    spleen = 100 - liver - lungs;
+    const pkaShift = Math.max(0, (form.lipidPka - 6.5) * 45);
+    const zetaShift = Math.max(0, (zetaPotentialMv - 5) * 2.2);
+    lungs = Math.min(68, Math.max(12, Math.round(15 + pkaShift + zetaShift)));
+    liver = Math.max(20, 78 - lungs);
+    spleen = Math.max(4, 100 - liver - lungs);
+    liver = 100 - lungs - spleen;
   } else if (form.lipidPka < 6.0 || zetaPotentialMv < -5) {
-    spleen = Math.min(62, Math.round(20 + (6.2 - form.lipidPka) * 50));
-    liver = Math.max(25, 90 - spleen - 8);
-    lungs = 100 - liver - spleen;
+    const pkaShift = Math.max(0, (6.2 - form.lipidPka) * 50);
+    const anionicShift = Math.max(0, (-4 - zetaPotentialMv) * 3.5);
+    spleen = Math.min(62, Math.max(18, Math.round(20 + pkaShift + anionicShift)));
+    liver = Math.max(25, 82 - spleen);
+    lungs = Math.max(4, 100 - liver - spleen);
+    liver = 100 - spleen - lungs;
   }
 
   let stabilityStatus: LnpBiophysicsResult['stabilityStatus'] = 'Optimal Clinical LNP';

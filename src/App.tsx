@@ -9,6 +9,7 @@ import {
   type GenePreset,
 } from './engines/bioEngines';
 import { NanoViewport3D } from './components/NanoViewport3D';
+import { GenomicSequenceViewer } from './components/GenomicSequenceViewer';
 import { tokens } from './styles/tokens';
 
 type SortField = 'id' | 'strand' | 'gcContent' | 'CompositeScore' | 'pam';
@@ -675,161 +676,12 @@ ${epitopeRows}
             </div>
           </div>
 
-          {/* Sequence & Reading Frame Track */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                Coding sequence (5&apos; → 3&apos;) and codon-aligned reading frame
-              </h2>
-              <div className="flex flex-wrap items-center gap-3.5 text-[11px] text-[#a69b8d]">
-                <span className="flex items-center gap-1.5">
-                  <span
-                    style={{ backgroundColor: tokens.colors.status.danger }}
-                    className="w-2 h-2 rounded-full inline-block"
-                  />
-                  Target (bp {activePreset.mutationIndex + 1})
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span
-                    style={{ backgroundColor: tokens.colors.status.warning }}
-                    className="w-2 h-2 rounded-full inline-block"
-                  />
-                  SAS SNP (bp {activePreset.sasSnpIndex + 1})
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span
-                    style={{ backgroundColor: tokens.colors.pigments.ochre }}
-                    className="w-2 h-2 rounded-xs inline-block"
-                  />
-                  Deaminase window (pos 4–8)
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span
-                    style={{ backgroundColor: tokens.colors.accent }}
-                    className="w-2 h-2 rounded-full inline-block"
-                  />
-                  Active spacer ({selectedGuide?.strand === '+' ? 'sense +' : 'antisense -'})
-                </span>
-              </div>
-            </div>
-
-            <div
-              style={{
-                backgroundColor: tokens.colors.canvas,
-                borderColor: tokens.colors.borderMuted,
-                borderRadius: tokens.radius,
-              }}
-              className="p-2.5 border font-mono-seq text-xs overflow-x-auto leading-relaxed"
-            >
-              {/* Codon-aligned Amino Acid Translation Ribbon */}
-              <div className="flex items-center text-[10px] text-[#70675c] mb-1 select-none">
-                {wildTypeProtein.split('').map((aa, codonIdx) => {
-                  const hasTargetInCodon =
-                    Math.floor(activePreset.mutationIndex / 3) === codonIdx;
-                  return (
-                    <span
-                      key={codonIdx}
-                      className={`inline-flex justify-center w-[2.7rem] shrink-0 border-r border-[#24201b] last:border-r-0 ${
-                        hasTargetInCodon ? 'text-[#e27b6c] font-semibold' : 'text-[#a69b8d]'
-                      }`}
-                      title={`Codon ${codonIdx + 1}: ${activePreset.sequence.slice(
-                        codonIdx * 3,
-                        codonIdx * 3 + 3
-                      )} (${aa})`}
-                    >
-                      {aa}
-                      <sub className="text-[8px] text-[#70675c] ml-0.5">{codonIdx + 1}</sub>
-                    </span>
-                  );
-                })}
-              </div>
-
-              {/* Nucleotide Track Grouped by Reading-Frame Codons */}
-              <div className="flex items-center select-all">
-                {Array.from({ length: Math.ceil(activePreset.sequence.length / 3) }).map(
-                  (_, codonIdx) => {
-                    const codonStart = codonIdx * 3;
-                    const codonBases = activePreset.sequence
-                      .slice(codonStart, codonStart + 3)
-                      .split('');
-
-                    return (
-                      <span
-                        key={codonIdx}
-                        className="inline-flex justify-center w-[2.7rem] shrink-0 border-r border-[#24201b]/60 last:border-r-0 py-0.5"
-                      >
-                        {codonBases.map((base, offset) => {
-                          const idx = codonStart + offset;
-                          const isTarget = idx === activePreset.mutationIndex;
-                          const isSnp = idx === activePreset.sasSnpIndex;
-                          const inActiveGuide =
-                            selectedGuide &&
-                            idx >= selectedGuide.startIndex &&
-                            idx < selectedGuide.startIndex + 20;
-
-                          // Strand-aware deaminase activity window (positions 4..8 from 5' end of spacer)
-                          const inDeaminaseWindow =
-                            selectedGuide &&
-                            (selectedGuide.strand === '+'
-                              ? idx >= selectedGuide.startIndex + 3 &&
-                                idx <= selectedGuide.startIndex + 7
-                              : idx >= selectedGuide.startIndex + 12 &&
-                                idx <= selectedGuide.startIndex + 16);
-
-                          let bg = 'transparent';
-                          let color: string | undefined = undefined;
-                          let border = 'transparent';
-
-                          if (isTarget) {
-                            bg = tokens.colors.status.danger;
-                            color = '#ffffff';
-                            border = inDeaminaseWindow ? tokens.colors.pigments.ochre : 'transparent';
-                          } else if (isSnp) {
-                            bg = tokens.colors.status.warning;
-                            color = '#12110f';
-                          } else if (inDeaminaseWindow) {
-                            bg = 'rgba(201, 138, 59, 0.24)';
-                            border = tokens.colors.pigments.ochre;
-                          } else if (inActiveGuide) {
-                            bg = tokens.colors.sequence.guideWindowBg;
-                            border = tokens.colors.sequence.protospacerUnderline;
-                          }
-
-                          return (
-                            <span
-                              key={idx}
-                              style={{
-                                backgroundColor: bg,
-                                color: color,
-                                borderBottom:
-                                  border !== 'transparent' ? `2px solid ${border}` : 'none',
-                                borderRadius: tokens.radius,
-                              }}
-                              className={`px-0.5 inline-block ${
-                                !isTarget && !isSnp ? getBaseColorClass(base) : 'font-bold'
-                              }`}
-                              title={`bp ${idx + 1} (Codon ${codonIdx + 1})${
-                                inDeaminaseWindow ? ' • In Deaminase Window (pos 4–8)' : ''
-                              }`}
-                            >
-                              {base}
-                            </span>
-                          );
-                        })}
-                      </span>
-                    );
-                  }
-                )}
-              </div>
-            </div>
-          </div>
+          {/* Sequence & Reading Frame Track (Humanistic Multi-Track Viewer) */}
+          <GenomicSequenceViewer
+            preset={activePreset}
+            selectedGuide={selectedGuide}
+            wildTypeProtein={wildTypeProtein}
+          />
 
           {/* Protospacer Candidates Table with Sorting & Filters */}
           <div

@@ -8,8 +8,9 @@ import { reverseComplement } from './guideScanner';
  * and complementary 5'-AAAC overhang to reverse strand.
  */
 export function generateCloningOligos(spacer: string): CloningOligos {
-  const needsG = spacer[0] !== 'G';
-  const fwdCore = (needsG ? 'G' : '') + spacer;
+  const cleanSpacer = spacer.trim().toUpperCase();
+  const needsG = cleanSpacer[0] !== 'G';
+  const fwdCore = (needsG ? 'G' : '') + cleanSpacer;
   const forwardOligo = `CACC${fwdCore}`;
   const reverseOligo = `AAAC${reverseComplement(fwdCore)}`;
 
