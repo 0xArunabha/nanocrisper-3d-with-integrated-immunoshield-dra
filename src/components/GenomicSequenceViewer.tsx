@@ -7,7 +7,7 @@ import {
   type GuideCandidate,
 } from '../engines/types';
 import { tokens } from '../styles/tokens';
-import { Copy, Check, Info, Crosshair, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Copy, Check, Info, Crosshair, ArrowRight, ArrowLeft, Download } from 'lucide-react';
 
 interface GenomicSequenceViewerProps {
   preset: GenePreset;
@@ -59,7 +59,6 @@ const getBaseLetterColor = (base: string): string => {
 };
 
 const BASE_WIDTH_PX = 22; // Exact cell width for monospace character grid
-const CODON_WIDTH_PX = BASE_WIDTH_PX * 3; // 66px per 3-base codon triad
 
 export function GenomicSequenceViewer({
   preset,
@@ -67,7 +66,7 @@ export function GenomicSequenceViewer({
   wildTypeProtein,
 }: GenomicSequenceViewerProps) {
   const [hoveredBaseIdx, setHoveredBaseIdx] = useState<number | null>(null);
-  const [copiedType, setCopiedType] = useState<'cds' | 'protein' | null>(null);
+  const [copiedType, setCopiedType] = useState<'cds' | 'protein' | 'fasta' | null>(null);
 
   const sequence = preset.sequence.toUpperCase();
   const seqLength = sequence.length;
@@ -109,10 +108,99 @@ export function GenomicSequenceViewer({
     };
   }, [selectedGuide, windowStartPosition, windowEndPosition]);
 
+  // Map codon index -> post-edit outcome from selectedGuide.bystanders
+  const codonDiffMap = useMemo(() => {
+    const map = new Map<
+      number,
+      {
+        editedCodon: string;
+        originalAA: string;
+        editedAA: string;
+        classification: BystanderEdit['classification'];
+      }
+    >();
+
+    if (!selectedGuide) return map;
+
+    for (const edit of selectedGuide.bystanders) {
+      const cIdx = Math.floor(edit.genomicIndex / 3);
+      const existing = map.get(cIdx);
+      // Prioritize Target Edit or pathogenic classifications if multiple bases in the same codon edit
+      if (
+        !existing ||
+        edit.classification === 'Target Edit' ||
+        edit.classification === 'Nonsense (Premature Stop)'
+      ) {
+        map.set(cIdx, {
+          editedCodon: edit.editedCodon,
+          originalAA: edit.originalAA,
+          editedAA: edit.editedAA,
+          classification: edit.classification,
+        });
+      }
+    }
+    return map;
+  }, [selectedGuide]);
+
+  // Construct co-edited CDS and edited protein string for FASTA export
+  const { coEditedCds, editedProtein } = useMemo(() => {
+    const cdsCodons: string[] = [];
+    const aaChars: string[] = [];
+
+    for (let cIdx = 0; cIdx < numCodons; cIdx++) {
+      const wtCodon = sequence.slice(cIdx * 3, cIdx * 3 + 3);
+      const wtAA = wildTypeProtein[cIdx] || '';
+      const diff = codonDiffMap.get(cIdx);
+      if (diff) {
+        cdsCodons.push(diff.editedCodon);
+        aaChars.push(diff.editedAA);
+      } else {
+        cdsCodons.push(wtCodon);
+        aaChars.push(wtAA);
+      }
+    }
+
+    return {
+      coEditedCds: cdsCodons.join(''),
+      editedProtein: aaChars.join(''),
+    };
+  }, [numCodons, sequence, wildTypeProtein, codonDiffMap]);
+
   // Copy sequence handlers
   const handleCopy = (text: string, type: 'cds' | 'protein') => {
-    navigator.clipboard.writeText(text);
-    setCopiedType(type);
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedType(type);
+      setTimeout(() => setCopiedType(null), 2000);
+    }).catch((err) => {
+      console.warn('Clipboard write failed:', err);
+    });
+  };
+
+  // Export Multi-Record FASTA file
+  const handleExportFasta = () => {
+    const guideHeader = selectedGuide
+      ? `\n>${preset.id}_${selectedGuide.id}_Spacer_${selectedGuide.strand}Strand_PAM_${selectedGuide.pam}\n${selectedGuide.spacer}`
+      : '';
+
+    const fastaContent = `>${preset.id}_WildType_CDS | ${preset.name} (${preset.disease})
+${sequence}
+>${preset.id}_CoEdited_CDS | Editor=${preset.editorType} Guide=${selectedGuide?.id ?? 'None'}
+${coEditedCds}
+>${preset.id}_WildType_Protein | Frame=+1 (${wildTypeProtein.length} aa)
+${wildTypeProtein}
+>${preset.id}_CoEdited_Protein | Editor=${preset.editorType} Guide=${selectedGuide?.id ?? 'None'}
+${editedProtein}${guideHeader}
+`;
+
+    const blob = new Blob([fastaContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${preset.id.toLowerCase()}_${selectedGuide?.id ?? 'locus'}.fasta`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    setCopiedType('fasta');
     setTimeout(() => setCopiedType(null), 2000);
   };
 
@@ -192,7 +280,7 @@ export function GenomicSequenceViewer({
       <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2 border-b border-[#24201b]">
         <div className="flex items-center gap-2">
           <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1] flex items-center gap-1.5">
-            Coding sequence (5&apos; → 3&apos;) & reading frame architecture
+            Coding sequence (5&apos; → 3&apos;) &amp; reading frame architecture
           </h2>
           {selectedGuide && (
             <span className="text-[10px] font-mono-seq px-1.5 py-0.5 rounded-[2px] bg-[#4d828f]/15 border border-[#4d828f]/40 text-[#98c2cc]">
@@ -201,7 +289,7 @@ export function GenomicSequenceViewer({
           )}
         </div>
 
-        {/* Legend: Publication-grade editorial indicators */}
+        {/* Legend & Export Utilities */}
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-[#a69b8d]">
           <span className="flex items-center gap-1.5" title="Pathogenic base edit target">
             <span className="w-2 h-2 rounded-full bg-[#bd5142] ring-1 ring-[#e27b6c]/60" />
@@ -227,14 +315,18 @@ export function GenomicSequenceViewer({
             PAM ({selectedGuide?.pam ?? '—'})
           </span>
 
-          {/* Quick Copy Buttons */}
+          {/* Quick Copy & FASTA Export Buttons */}
           <div className="flex items-center gap-1 pl-2 border-l border-[#24201b]">
             <button
               onClick={() => handleCopy(sequence, 'cds')}
               className="px-1.5 py-0.5 text-[10px] rounded-[2px] bg-[#1c1a16] hover:bg-[#25221c] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] transition flex items-center gap-1 cursor-pointer"
               title="Copy 5' to 3' CDS sequence"
             >
-              {copiedType === 'cds' ? <Check className="w-2.5 h-2.5 text-[#5e946c]" /> : <Copy className="w-2.5 h-2.5" />}
+              {copiedType === 'cds' ? (
+                <Check className="w-2.5 h-2.5 text-[#5e946c]" />
+              ) : (
+                <Copy className="w-2.5 h-2.5" />
+              )}
               {copiedType === 'cds' ? 'Copied' : 'CDS'}
             </button>
             <button
@@ -242,8 +334,24 @@ export function GenomicSequenceViewer({
               className="px-1.5 py-0.5 text-[10px] rounded-[2px] bg-[#1c1a16] hover:bg-[#25221c] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] transition flex items-center gap-1 cursor-pointer"
               title="Copy translated polypeptide sequence"
             >
-              {copiedType === 'protein' ? <Check className="w-2.5 h-2.5 text-[#5e946c]" /> : <Copy className="w-2.5 h-2.5" />}
+              {copiedType === 'protein' ? (
+                <Check className="w-2.5 h-2.5 text-[#5e946c]" />
+              ) : (
+                <Copy className="w-2.5 h-2.5" />
+              )}
               {copiedType === 'protein' ? 'Copied' : 'Protein'}
+            </button>
+            <button
+              onClick={handleExportFasta}
+              className="px-1.5 py-0.5 text-[10px] rounded-[2px] bg-[#1c1a16] hover:bg-[#25221c] border border-[#332e27] text-[#98c2cc] hover:text-[#e8dfd1] transition flex items-center gap-1 cursor-pointer"
+              title="Export Wild-Type & Co-Edited CDS/Protein as multi-record FASTA"
+            >
+              {copiedType === 'fasta' ? (
+                <Check className="w-2.5 h-2.5 text-[#5e946c]" />
+              ) : (
+                <Download className="w-2.5 h-2.5 text-[#4d828f]" />
+              )}
+              {copiedType === 'fasta' ? 'Saved' : '.FASTA'}
             </button>
           </div>
         </div>
@@ -258,8 +366,10 @@ export function GenomicSequenceViewer({
         }}
         className="p-3 border font-mono-seq text-xs overflow-x-auto select-none transition-colors"
       >
-        <div style={{ width: `${totalTrackWidth}px`, minWidth: '100%' }} className="relative flex flex-col">
-          
+        <div
+          style={{ width: `${totalTrackWidth}px`, minWidth: '100%' }}
+          className="relative flex flex-col"
+        >
           {/* TRACK 1: GENOMIC COORDINATE RULER (Scale ticks every 5 bp, labels every 10 bp) */}
           <div className="flex items-end h-5 text-[9px] text-[#70675c] border-b border-[#24201b]/80 pb-0.5">
             {Array.from({ length: seqLength }).map((_, idx) => {
@@ -278,7 +388,11 @@ export function GenomicSequenceViewer({
                   )}
                   <div
                     className={`w-[1px] ${
-                      isTen ? 'h-2.5 bg-[#54493b]' : isFive ? 'h-1.5 bg-[#332e27]' : 'h-0.5 bg-[#24201b]'
+                      isTen
+                        ? 'h-2.5 bg-[#54493b]'
+                        : isFive
+                        ? 'h-1.5 bg-[#332e27]'
+                        : 'h-0.5 bg-[#24201b]'
                     }`}
                   />
                 </div>
@@ -286,29 +400,35 @@ export function GenomicSequenceViewer({
             })}
           </div>
 
-          {/* TRACK 2: AMINO ACID TRANSLATION RIBBON (Codon-aligned reading frame) */}
-          <div className="flex items-center h-6 my-1">
+          {/* TRACK 2: WILD-TYPE AMINO ACID TRANSLATION RIBBON (Codon-aligned reading frame) */}
+          <div className="flex items-center h-6 mt-1">
             {Array.from({ length: numCodons }).map((_, codonIdx) => {
               const codonStart = codonIdx * 3;
-              const aa = wildTypeProtein[codonIdx] || '?';
+              const codonBases = Math.min(3, seqLength - codonStart);
+              const codonWidth = codonBases * BASE_WIDTH_PX;
+              const isPartial = codonBases < 3;
+              const aa = wildTypeProtein[codonIdx] || (isPartial ? '' : '?');
               const hasTarget = Math.floor(preset.mutationIndex / 3) === codonIdx;
               const hasSnp = Math.floor(preset.sasSnpIndex / 3) === codonIdx;
-              const codonSeq = sequence.slice(codonStart, codonStart + 3);
+              const codonSeq = sequence.slice(codonStart, codonStart + codonBases);
               const isEven = codonIdx % 2 === 0;
 
               return (
                 <div
                   key={codonIdx}
-                  style={{ width: `${CODON_WIDTH_PX}px` }}
+                  style={{ width: `${codonWidth}px` }}
                   className={`shrink-0 h-full flex items-center justify-center relative transition-colors ${
                     isEven ? 'bg-[#181613]/40' : 'bg-transparent'
                   }`}
-                  title={`Codon ${codonIdx + 1}: ${codonSeq} (${AA_DICTIONARY[aa]?.name || aa})`}
+                  title={
+                    isPartial
+                      ? `Partial Codon ${codonIdx + 1}: ${codonSeq} (${codonBases} bp)`
+                      : `Wild-Type Codon ${codonIdx + 1}: ${codonSeq} (${
+                          AA_DICTIONARY[aa]?.name || aa
+                        })`
+                  }
                 >
-                  {/* Subtle codon boundary tick mark at top */}
                   <div className="absolute top-0 right-0 w-[1px] h-1.5 bg-[#24201b]" />
-
-                  {/* Amino acid 1-letter and index display */}
                   <div className="flex items-baseline gap-0.5 select-none">
                     <span
                       className={`text-[11px] font-semibold tracking-tight ${
@@ -319,11 +439,13 @@ export function GenomicSequenceViewer({
                           : 'text-[#a69b8d]'
                       }`}
                     >
-                      {aa}
+                      {isPartial ? `+${codonBases}` : aa}
                     </span>
-                    <span className="text-[8px] text-[#54493b] font-mono-seq">
-                      {codonIdx + 1}
-                    </span>
+                    {!isPartial && (
+                      <span className="text-[8px] text-[#54493b] font-mono-seq">
+                        {codonIdx + 1}
+                      </span>
+                    )}
                   </div>
                 </div>
               );
@@ -361,7 +483,6 @@ export function GenomicSequenceViewer({
               const isPamStart = guideMetrics && idx === guideMetrics.pamStart;
               const isPamEnd = guideMetrics && idx === guideMetrics.pamEnd;
 
-              // CONTINUOUS SEAMLESS UNDERLAY LOGIC
               let bg = 'transparent';
               let borderTop = '1px solid transparent';
               let borderBottom = '1px solid transparent';
@@ -408,7 +529,6 @@ export function GenomicSequenceViewer({
                 }
               }
 
-              // High-precision precision indicators for variants
               if (isTarget) {
                 cellBoxShadow = 'inset 0 0 0 1.5px #bd5142, 0 0 8px rgba(189, 81, 66, 0.4)';
                 bg = 'rgba(189, 81, 66, 0.28)';
@@ -438,21 +558,18 @@ export function GenomicSequenceViewer({
                   }`}
                   title={`bp ${idx + 1} (${base}) • Codon ${codonIdx + 1}`}
                 >
-                  {/* Subtle target caret above character */}
                   {isTarget && (
                     <div className="absolute -top-1 text-[7px] text-[#e27b6c] select-none leading-none">
                       ▼
                     </div>
                   )}
 
-                  {/* Subtle SNP diamond above character */}
                   {isSnp && !isTarget && (
                     <div className="absolute -top-1 text-[6px] text-[#df9e51] select-none leading-none">
                       ◆
                     </div>
                   )}
 
-                  {/* Monospace Nucleotide Character */}
                   <span
                     className={`font-mono-seq text-xs font-semibold ${
                       isTarget
@@ -469,8 +586,77 @@ export function GenomicSequenceViewer({
             })}
           </div>
 
+          {/* TRACK 3B: POST-EDIT POLYPEPTIDE DIFF RIBBON (Co-Edited Reading Frame) */}
+          <div className="flex items-center h-6 mb-0.5 border-t border-[#24201b]/50">
+            {Array.from({ length: numCodons }).map((_, codonIdx) => {
+              const codonStart = codonIdx * 3;
+              const codonBases = Math.min(3, seqLength - codonStart);
+              const codonWidth = codonBases * BASE_WIDTH_PX;
+              const isPartial = codonBases < 3;
+              const wtAA = wildTypeProtein[codonIdx] || (isPartial ? `+${codonBases}` : '?');
+              const diff = codonDiffMap.get(codonIdx);
+
+              if (!diff) {
+                return (
+                  <div
+                    key={codonIdx}
+                    style={{ width: `${codonWidth}px` }}
+                    className="shrink-0 h-full flex items-center justify-center text-[10px] text-[#332e27] border-r border-[#24201b]/40 last:border-r-0"
+                    title={
+                      isPartial
+                        ? `Partial Codon ${codonIdx + 1} (${codonBases} bp)`
+                        : `Codon ${codonIdx + 1}: Unchanged (${wtAA})`
+                    }
+                  >
+                    ·
+                  </div>
+                );
+              }
+
+              const isTargetEdit = diff.classification === 'Target Edit';
+              const isSilent = diff.classification === 'Silent (Synonymous)';
+              const badgeBg = isTargetEdit
+                ? 'rgba(94, 148, 108, 0.22)'
+                : isSilent
+                ? 'rgba(77, 130, 143, 0.22)'
+                : 'rgba(189, 81, 66, 0.26)';
+              const badgeBorder = isTargetEdit
+                ? '#5e946c'
+                : isSilent
+                ? '#4d828f'
+                : '#bd5142';
+              const badgeText = isTargetEdit
+                ? '#73a880'
+                : isSilent
+                ? '#98c2cc'
+                : '#e27b6c';
+
+              return (
+                <div
+                  key={codonIdx}
+                  style={{ width: `${codonWidth}px` }}
+                  className="shrink-0 h-full flex items-center justify-center border-r border-[#24201b]/40 last:border-r-0 px-0.5"
+                  title={`Post-Edit Codon ${codonIdx + 1}: ${diff.editedCodon} (${diff.originalAA} → ${diff.editedAA}) • ${diff.classification}`}
+                >
+                  <span
+                    style={{
+                      backgroundColor: badgeBg,
+                      borderColor: badgeBorder,
+                      color: badgeText,
+                    }}
+                    className="px-1 py-0.2 rounded-[2px] border text-[9px] font-mono-seq font-semibold leading-none tracking-tighter"
+                  >
+                    {isSilent
+                      ? `=${diff.editedAA} (Syn)`
+                      : `${diff.originalAA}${codonIdx + 1}${diff.editedAA}`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
           {/* TRACK 4: DEDICATED CRISPR FEATURE ARCHITECTURE RIBBON */}
-          <div className="relative h-11 mt-1.5 border-t border-[#24201b]/80 pt-1">
+          <div className="relative h-11 mt-1 border-t border-[#24201b]/80 pt-1">
             {guideMetrics && selectedGuide && (
               <>
                 {/* 20-nt Protospacer Directional Vector Banner */}
@@ -530,7 +716,7 @@ export function GenomicSequenceViewer({
               </>
             )}
 
-            {/* Target Mutation Landmark Pin (Layer 2) */}
+            {/* Target Mutation Landmark Pin */}
             <div
               style={{
                 left: `${preset.mutationIndex * BASE_WIDTH_PX}px`,
@@ -545,7 +731,7 @@ export function GenomicSequenceViewer({
               </span>
             </div>
 
-            {/* SAS Population SNP Landmark Pin (Layer 2) */}
+            {/* SAS Population SNP Landmark Pin */}
             {preset.sasSnpIndex >= 0 && preset.sasSnpIndex < seqLength && (
               <div
                 style={{
@@ -572,7 +758,8 @@ export function GenomicSequenceViewer({
             <span className="flex items-center gap-1.5 text-[#e8dfd1]">
               <Crosshair className="w-3 h-3 text-[#4d828f]" />
               <span>
-                bp <strong className="text-[#e8dfd1]">{hoverTelemetry.idx + 1}</strong> of {seqLength}
+                bp <strong className="text-[#e8dfd1]">{hoverTelemetry.idx + 1}</strong> of{' '}
+                {seqLength}
               </span>
               <span className="px-1 py-0.2 rounded-[2px] bg-[#211e1a] text-[10px] font-bold text-[#e8dfd1]">
                 {hoverTelemetry.base}
@@ -580,8 +767,10 @@ export function GenomicSequenceViewer({
             </span>
 
             <span>
-              Codon <strong className="text-[#e8dfd1]">#{hoverTelemetry.codonIdx + 1}</strong> ({hoverTelemetry.codonTriad} →{' '}
-              <span className="text-[#e8dfd1] font-semibold">{hoverTelemetry.aaInfo.code3}</span> / {hoverTelemetry.aaLetter})
+              Codon <strong className="text-[#e8dfd1]">#{hoverTelemetry.codonIdx + 1}</strong> (
+              {hoverTelemetry.codonTriad} →{' '}
+              <span className="text-[#e8dfd1] font-semibold">{hoverTelemetry.aaInfo.code3}</span> /{' '}
+              {hoverTelemetry.aaLetter})
             </span>
 
             <span className="text-[#98c2cc]">{hoverTelemetry.guideContext}</span>
@@ -603,16 +792,19 @@ export function GenomicSequenceViewer({
             {hoverTelemetry.bystander && (
               <span className="text-[#e0ad5a] flex items-center gap-1">
                 <Info className="w-3 h-3" />
-                Co-edit: {hoverTelemetry.bystander.originalCodon} ({hoverTelemetry.bystander.originalAA}) →{' '}
-                {hoverTelemetry.bystander.editedCodon} ({hoverTelemetry.bystander.editedAA}) [
-                {hoverTelemetry.bystander.classification}]
+                Co-edit: {hoverTelemetry.bystander.originalCodon} (
+                {hoverTelemetry.bystander.originalAA}) → {hoverTelemetry.bystander.editedCodon} (
+                {hoverTelemetry.bystander.editedAA}) [{hoverTelemetry.bystander.classification}]
               </span>
             )}
           </div>
         ) : (
           <div className="text-[#70675c] flex items-center gap-2">
             <Info className="w-3 h-3" />
-            <span>Hover over any nucleotide to inspect genomic coordinates, codon translation, and guide positions.</span>
+            <span>
+              Hover over any nucleotide to inspect genomic coordinates, codon translation, and guide
+              positions.
+            </span>
           </div>
         )}
 

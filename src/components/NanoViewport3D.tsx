@@ -1,9 +1,35 @@
 // src/components/NanoViewport3D.tsx
-import React, { useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import React, { useMemo, useRef, useState, useEffect, useLayoutEffect, useCallback } from 'react';
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import type { LnpBiophysicsResult, LnpFormulation } from '../engines/bioEngines';
+import {
+  Camera,
+  Check,
+  Lock,
+  RotateCcw,
+  Sparkles,
+  Eye,
+  EyeOff,
+  Scissors,
+  CircleDot,
+  Globe,
+  Activity,
+  Play,
+  Pause,
+  Plus,
+  Minus,
+  Crosshair,
+  Maximize2,
+  Minimize2,
+  Expand,
+  Shrink,
+} from 'lucide-react';
+import {
+  calculateAmbientLnpTelemetry,
+  type LnpBiophysicsResult,
+  type LnpFormulation,
+} from '../engines/bioEngines';
 import { tokens } from '../styles/tokens';
 
 interface Props {
@@ -14,6 +40,7 @@ interface Props {
 export type CutawayMode = 'quarter' | 'half' | 'full' | 'core';
 export type InspectedLayer = 'all' | 'peg' | 'lipids' | 'tails' | 'mrna' | 'apoe';
 export type OpticalMode = 'pbr' | 'cryo' | 'electrostatic';
+export type ViewportSize = 'standard' | 'expanded' | 'fullscreen';
 
 interface LayerVisibility {
   peg: boolean;
@@ -23,37 +50,49 @@ interface LayerVisibility {
   apoe: boolean;
 }
 
-// Fixed upper-bound capacities for zero-reallocation GPU InstancedMesh buffers
+// Upper-bound capacities for GPU InstancedMesh buffers
 const MAX_LIPID_HEADS = 2400;
 const MAX_ACYL_TAILS = 4800;
 const MAX_PEG_BEADS = 8400;
-const MAX_MICELLES = 420;
+const MAX_MICELLES = 480;
 const MAX_RNA_RUNGS = 180;
 
-// Fast spatial cutaway predicate for unit-sphere coordinates
+/**
+ * Fast spatial cutaway predicate for unit-sphere coordinates.
+ * Slices the positive quadrant (x > 0 and z > 0) for 90° wedge or (z > 0) for 180° sagittal.
+ */
 function isPointCut(x: number, _y: number, z: number, mode: CutawayMode): boolean {
   if (mode === 'full' || mode === 'core') return false;
   if (mode === 'half') {
     return z > 0.0;
   }
   if (mode === 'quarter') {
-    // Clean front-right quadrant cutaway (x > 0 and z > 0) matching orthogonal half-disk caps
     return x > 0.0 && z > 0.0;
   }
   return false;
 }
 
-// Procedural SAXS / Cryo-EM electron-density cross-section texture
-function createElectronDensityTexture(protonationFraction: number): THREE.DataTexture {
-  const size = 256;
+/**
+ * Procedural 512x512 High-DPI SAXS & Cryo-EM Electron-Density Cross-Section Texture.
+ */
+function createElectronDensityTexture(
+  protonationFraction: number,
+  opticalMode: OpticalMode,
+  saxsSpacingNm: number = 6.2
+): THREE.DataTexture {
+  const size = 512;
   const data = new Uint8Array(size * size * 4);
   const center = size / 2;
+  const maxR = size * 0.485;
+
+  const isHiiPhase = protonationFraction > 0.45;
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const dx = (x - center) / center;
-      const dy = (y - center) / center;
+      const dx = (x - center) / maxR;
+      const dy = (y - center) / maxR;
       const r = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
       const idx = (y * size + x) * 4;
 
       if (r > 1.0) {
@@ -64,35 +103,133 @@ function createElectronDensityTexture(protonationFraction: number): THREE.DataTe
         continue;
       }
 
-      // Concentric Bragg diffraction / inverted hexagonal H_II water-channel rings (d ~ 6.1 nm)
-      const braggWave = Math.sin(r * Math.PI * 14.0) * 0.5 + 0.5;
-      const hexModulation = Math.cos(Math.atan2(dy, dx) * 6.0) * 0.18 * protonationFraction;
-      const shellPeak = r > 0.78 ? 0.95 : 0.35 + 0.45 * braggWave + hexModulation;
+      let rVal = 0;
+      let gVal = 0;
+      let bVal = 0;
+      let aVal = 255;
 
-      const baseR = Math.round(28 + shellPeak * (45 + protonationFraction * 22));
-      const baseG = Math.round(36 + shellPeak * (75 + protonationFraction * 35));
-      const baseB = Math.round(44 + shellPeak * 88);
+      // 1. OUTER POLAR HEADGROUP MONOLAYER RIM (r in [0.89, 1.0]) ~2.5 nm
+      if (r >= 0.89) {
+        const headModulation = (Math.sin(angle * 72.0) * 0.5 + 0.5) * 0.2;
+        const rimIntensity = 0.8 + headModulation;
 
-      data[idx] = Math.min(255, baseR);
-      data[idx + 1] = Math.min(255, baseG);
-      data[idx + 2] = Math.min(255, baseB);
-      data[idx + 3] = r > 0.98 ? 0 : Math.round(165 * (0.45 + 0.55 * r));
+        if (opticalMode === 'cryo') {
+          const gray = Math.round(180 * rimIntensity);
+          rVal = gray;
+          gVal = gray;
+          bVal = gray;
+        } else if (opticalMode === 'electrostatic') {
+          rVal = Math.round(180 * (1 - protonationFraction * 0.6));
+          gVal = Math.round(195 * (0.6 + protonationFraction * 0.4));
+          bVal = Math.round(140 + protonationFraction * 80);
+        } else {
+          rVal = Math.round(215 * rimIntensity);
+          gVal = Math.round(175 * rimIntensity);
+          bVal = Math.round(105 * rimIntensity);
+        }
+        aVal = Math.round(250 * Math.min(1.0, (1.0 - r) * 25));
+      }
+      // 2. HYDROPHOBIC ACYL TAIL ZONE (r in [0.76, 0.89]) ~3.5 nm
+      else if (r >= 0.76) {
+        const tailStriation = Math.sin(angle * 144.0) * 0.12;
+        const tailDepth = (r - 0.76) / 0.13;
+        const baseDark = 0.22 + 0.18 * tailDepth + tailStriation;
+
+        if (opticalMode === 'cryo') {
+          const gray = Math.round(65 + 45 * baseDark);
+          rVal = gray;
+          gVal = gray;
+          bVal = gray;
+        } else if (opticalMode === 'electrostatic') {
+          rVal = Math.round(75 + 30 * baseDark);
+          gVal = Math.round(65 + 25 * baseDark);
+          bVal = Math.round(55 + 20 * baseDark);
+        } else {
+          rVal = Math.round(92 * baseDark);
+          gVal = Math.round(74 * baseDark);
+          bVal = Math.round(56 * baseDark);
+        }
+      }
+      // 3. CORE INTERNAL MATRIX (r < 0.76)
+      else {
+        const saxsFreq = (6.2 / Math.max(4.0, saxsSpacingNm)) * 14.0;
+        const braggRing = Math.sin(r * Math.PI * saxsFreq) * 0.5 + 0.5;
+
+        let hexPore = 0;
+        if (isHiiPhase) {
+          const u = dx * 22.0;
+          const v = dy * 22.0;
+          const hx = u * 0.866 - v * 0.5;
+          const hy = v;
+          const distToPore = Math.sqrt(
+            Math.pow((Math.abs(hx) % 1.0) - 0.5, 2) + Math.pow((Math.abs(hy) % 1.0) - 0.5, 2)
+          );
+          hexPore = Math.max(0, 1.0 - distToPore * 3.2) * (protonationFraction - 0.35) * 1.5;
+        }
+
+        const isCentralRnp = r < 0.28;
+        const rnpMottle = (Math.sin(dx * 45) * Math.cos(dy * 45) * 0.5 + 0.5) * 0.25;
+
+        if (opticalMode === 'cryo') {
+          let gray = Math.round(50 + 60 * braggRing + hexPore * 75);
+          if (isCentralRnp) gray = Math.round(gray * 1.35 + rnpMottle * 40);
+          rVal = gray;
+          gVal = gray;
+          bVal = gray;
+        } else if (opticalMode === 'electrostatic') {
+          rVal = Math.round(35 + (1 - braggRing) * 80 + (isCentralRnp ? 50 : 0));
+          gVal = Math.round(55 + braggRing * 110 + hexPore * 100);
+          bVal = Math.round(75 + braggRing * 90 + hexPore * 80);
+        } else {
+          const poreGlow = Math.min(1.0, hexPore * 1.2);
+          rVal = Math.round(42 + 45 * braggRing + poreGlow * 55 + (isCentralRnp ? 60 : 0));
+          gVal = Math.round(36 + 35 * braggRing + poreGlow * 115 + (isCentralRnp ? 35 : 0));
+          bVal = Math.round(32 + 30 * braggRing + poreGlow * 120 + (isCentralRnp ? 45 : 0));
+        }
+
+        aVal = Math.round(235 + 20 * (1 - r));
+      }
+
+      data[idx] = Math.min(255, Math.max(0, rVal));
+      data[idx + 1] = Math.min(255, Math.max(0, gVal));
+      data[idx + 2] = Math.min(255, Math.max(0, bVal));
+      data[idx + 3] = aVal;
     }
   }
 
   const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
   return tex;
 }
 
-function RendererConfig({ diameter }: { diameter: number }) {
-  const { camera } = useThree();
+function RendererConfig({
+  diameter,
+  captureRef,
+}: {
+  diameter: number;
+  captureRef: React.RefObject<(() => string | null) | null>;
+}) {
+  const { gl, scene, camera } = useThree();
 
   useEffect(() => {
-    const targetZ = 4.15 + Math.max(0, (diameter - 50) / 130) * 1.55;
+    const targetZ = 4.45 + Math.max(0, (diameter - 50) / 130) * 1.65;
     camera.position.set(0, 0, targetZ);
     camera.updateProjectionMatrix();
   }, [camera, diameter]);
+
+  useEffect(() => {
+    captureRef.current = () => {
+      gl.render(scene, camera);
+      return gl.domElement.toDataURL('image/png');
+    };
+    return () => {
+      captureRef.current = null;
+    };
+  }, [gl, scene, camera, captureRef]);
 
   return null;
 }
@@ -102,8 +239,13 @@ interface SceneProps extends Props {
   cutawayMode: CutawayMode;
   opticalMode: OpticalMode;
   ambientPh: number;
+  liveProtonation: number;
+  liveCpp: number;
+  saxsSpacing: number;
   visibility: LayerVisibility;
   inspectedLayer: InspectedLayer;
+  onHoverLayer: (layer: InspectedLayer | null) => void;
+  onSelectLayer: (layer: InspectedLayer) => void;
 }
 
 function InstancedNanoparticleScene({
@@ -113,42 +255,47 @@ function InstancedNanoparticleScene({
   cutawayMode,
   opticalMode,
   ambientPh,
+  liveProtonation,
+  liveCpp,
+  saxsSpacing,
   visibility,
   inspectedLayer,
+  onHoverLayer,
+  onSelectLayer,
 }: SceneProps) {
   const groupRef = useRef<THREE.Group>(null);
 
-  // Pre-allocated InstancedMesh refs (<8 GPU draw calls total)
   const headsMeshRef = useRef<THREE.InstancedMesh>(null);
   const tailsMeshRef = useRef<THREE.InstancedMesh>(null);
   const pegMeshRef = useRef<THREE.InstancedMesh>(null);
   const micellesMeshRef = useRef<THREE.InstancedMesh>(null);
   const rungsMeshRef = useRef<THREE.InstancedMesh>(null);
 
-  // Outer radius scaled to DLS hydrodynamic diameter
+  const bindLayerEvents = useCallback(
+    (layer: Exclude<InspectedLayer, 'all'>) => ({
+      onPointerOver: (e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        onHoverLayer(layer);
+      },
+      onPointerOut: (e: ThreeEvent<PointerEvent>) => {
+        e.stopPropagation();
+        onHoverLayer(null);
+      },
+      onClick: (e: ThreeEvent<MouseEvent>) => {
+        e.stopPropagation();
+        onSelectLayer(layer);
+      },
+    }),
+    [onHoverLayer, onSelectLayer]
+  );
+
   const radius = useMemo(() => {
     return 1.45 + ((biophysics.diameterNm - 50) / 130) * 0.95;
   }, [biophysics.diameterNm]);
 
-  const shellThickness = useMemo(() => radius * 0.21, [radius]);
+  const shellThickness = useMemo(() => radius * 0.22, [radius]);
   const coreRadius = useMemo(() => radius - shellThickness, [radius, shellThickness]);
 
-  // Live Henderson-Hasselbalch ionization at user-selected ambient pH
-  const liveProtonation = useMemo(() => {
-    return 1 / (1 + Math.pow(10, ambientPh - formulation.lipidPka));
-  }, [ambientPh, formulation.lipidPka]);
-
-  // Quantized protonation (2% steps) for electron-density texture caching
-  const quantizedProtonation = useMemo(() => {
-    return Math.round(liveProtonation * 50) / 50;
-  }, [liveProtonation]);
-
-  // Israelachvili Critical Packing Parameter (CPP = v / (a0 * lc))
-  const liveCpp = useMemo(() => {
-    return 1.08 + liveProtonation * 0.58;
-  }, [liveProtonation]);
-
-  // Derived stoichiometric molar fractions (Cholesterol balances to 100%)
   const effectiveCholesterol = Math.max(
     0,
     100 - formulation.ionizableLipid - formulation.dspcHelper - formulation.pegLipid
@@ -157,7 +304,20 @@ function InstancedNanoparticleScene({
   const dspcFrac = formulation.dspcHelper / 100;
   const cholFrac = effectiveCholesterol / 100;
 
-  // 1. High-density Fibonacci lattice: 2,400 outer lipids + 4,800 sn-1/sn-2 acyl chains
+  const clippingPlanes = useMemo(() => {
+    if (cutawayMode === 'quarter') {
+      return [
+        new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
+        new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
+      ];
+    }
+    if (cutawayMode === 'half') {
+      return [new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)];
+    }
+    return [];
+  }, [cutawayMode]);
+
+  // High-density Fibonacci lattice: 2,400 outer lipids + 4,800 sn-1/sn-2 acyl chains
   const {
     headMatrices,
     headColors,
@@ -187,17 +347,16 @@ function InstancedNanoparticleScene({
     const dummyObj = new THREE.Object3D();
     const upVec = new THREE.Vector3(0, 1, 0);
 
-    // PEG brush physics: De Gennes mushroom (<2.2 mol%) vs dense brush (>=2.2 mol%)
     const pegSheddingFactor = ambientPh < 6.2 ? 0.68 : 1.0;
     const isBrush = formulation.pegLipid >= 2.2;
-    const chainLength = (isBrush ? radius * 0.29 : radius * 0.15) * pegSheddingFactor;
+    const chainLength = (isBrush ? radius * 0.30 : radius * 0.16) * pegSheddingFactor;
     const beadsPerChain = isBrush ? 7 : 5;
 
     const targetApoECount = Math.max(1, Math.min(12, Math.round(biophysics.cellularUptakeScore / 9)));
     let apoeAssigned = 0;
+    let dspcCount = 0;
 
-    // Splay angle for dual sn-1 / sn-2 hydrophobic tails driven by CPP (H_II transition at pH 5.5)
-    const splayAngle = 0.09 + (liveCpp - 1.08) * 0.28;
+    const splayAngle = 0.10 + (liveCpp - 1.08) * 0.32;
 
     for (let i = 0; i < lipidCount; i++) {
       const y = 1 - (i / (lipidCount - 1)) * 2;
@@ -211,22 +370,22 @@ function InstancedNanoparticleScene({
 
       const seed = (i * 1.618033988749895) % 1.0;
       let type: 'ionizable' | 'dspc' | 'chol' | 'peg' = 'ionizable';
-      let headScale = 0.028;
-      let tailLen = shellThickness * 0.84;
+      let headScale = 0.038;
+      let tailLen = shellThickness * 0.82;
       const col = new THREE.Color();
 
       if (seed < pegFrac * pegSheddingFactor) {
         type = 'peg';
-        headScale = 0.032;
+        headScale = 0.040;
         col.set(tokens.colors.pigments.petrol);
       } else if (seed < pegFrac + dspcFrac) {
         type = 'dspc';
-        headScale = 0.031;
+        headScale = 0.041;
         col.set(tokens.colors.pigments.ivory);
       } else if (seed < pegFrac + dspcFrac + cholFrac) {
         type = 'chol';
-        headScale = 0.024;
-        tailLen = shellThickness * 0.52;
+        headScale = 0.033;
+        tailLen = shellThickness * 0.54;
         col.set(tokens.colors.pigments.terracotta);
       } else {
         if (opticalMode === 'electrostatic') {
@@ -236,18 +395,17 @@ function InstancedNanoparticleScene({
             liveProtonation
           );
         } else if (opticalMode === 'cryo') {
-          col.set('#a89f91');
+          col.set('#b0a79a');
         } else {
           col.lerpColors(
-            new THREE.Color('#c49245'),
+            new THREE.Color('#cfa052'),
             new THREE.Color(tokens.colors.status.success),
             liveProtonation * 0.65
           );
         }
       }
 
-      // Radial position of headgroup (cholesterol recessed slightly into acyl layer)
-      const radialOffset = type === 'chol' ? radius - shellThickness * 0.18 : radius;
+      const radialOffset = type === 'chol' ? radius - shellThickness * 0.16 : radius;
       dummyObj.position.copy(norm).multiplyScalar(radialOffset);
       dummyObj.scale.setScalar(headScale);
       dummyObj.rotation.set(0, 0, 0);
@@ -255,45 +413,42 @@ function InstancedNanoparticleScene({
       hMats.push(dummyObj.matrix.clone());
       hCols.push(col);
 
-      // Build orthonormal tangent basis on sphere surface
       const refAxis = Math.abs(norm.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
       const tangent = new THREE.Vector3().crossVectors(norm, refAxis).normalize();
       const bitangent = new THREE.Vector3().crossVectors(norm, tangent).normalize();
 
       const baseQuat = new THREE.Quaternion().setFromUnitVectors(upVec, norm);
       const tailColor = new THREE.Color(
-        opticalMode === 'cryo' ? '#575046' : type === 'chol' ? '#6e3d32' : '#4a4033'
+        opticalMode === 'cryo' ? '#4f473e' : type === 'chol' ? '#5c3127' : '#3d3429'
       );
 
       if (type === 'chol') {
         const center = norm.clone().multiplyScalar(radialOffset - tailLen * 0.5);
         dummyObj.position.copy(center);
         dummyObj.quaternion.copy(baseQuat);
-        dummyObj.scale.set(0.011, tailLen, 0.011);
+        dummyObj.scale.set(0.014, tailLen, 0.014);
         dummyObj.updateMatrix();
         tMats.push(dummyObj.matrix.clone());
         tCols.push(tailColor);
       } else {
-        // Dual splayed acyl chains (sn-1 & sn-2): premultiply world-space tangent rotation
         for (const dir of [-1, 1]) {
           const splayQuat = new THREE.Quaternion().setFromAxisAngle(tangent, dir * splayAngle);
           const finalQuat = baseQuat.clone().premultiply(splayQuat);
-          const lateralShift = bitangent.clone().multiplyScalar(dir * 0.011);
+          const lateralShift = bitangent.clone().multiplyScalar(dir * 0.013);
           const center = norm
             .clone()
-            .multiplyScalar(radius - tailLen * 0.52)
+            .multiplyScalar(radius - tailLen * 0.50)
             .add(lateralShift);
 
           dummyObj.position.copy(center);
           dummyObj.quaternion.copy(finalQuat);
-          dummyObj.scale.set(0.0072, tailLen, 0.0072);
+          dummyObj.scale.set(0.010, tailLen, 0.010);
           dummyObj.updateMatrix();
           tMats.push(dummyObj.matrix.clone());
           tCols.push(tailColor);
         }
       }
 
-      // Populate PEG2000 polymer brush segments
       if (type === 'peg' && i % 2 === 0 && pegData.length + beadsPerChain <= MAX_PEG_BEADS) {
         const anchorPos = norm.clone().multiplyScalar(radius);
         for (let step = 1; step <= beadsPerChain; step++) {
@@ -306,18 +461,21 @@ function InstancedNanoparticleScene({
             bitangent: bitangent.clone(),
             t,
             chainIdx: i,
-            scale: 0.021 - t * 0.006,
+            scale: 0.025 - t * 0.007,
           });
         }
       }
 
-      // Surface ApoE3/ApoE4 lipoprotein four-helix bundle opsonins
-      if (type === 'dspc' && apoeAssigned < targetApoECount && i % 165 === 0) {
-        apoeList.push({
-          pos: norm.clone().multiplyScalar(radius + 0.048),
-          quat: baseQuat.clone(),
-        });
-        apoeAssigned++;
+      if (type === 'dspc') {
+        dspcCount++;
+        const dspcStep = Math.max(1, Math.floor(200 / targetApoECount));
+        if (apoeAssigned < targetApoECount && dspcCount % dspcStep === 0) {
+          apoeList.push({
+            pos: norm.clone().multiplyScalar(radius + 0.048),
+            quat: baseQuat.clone(),
+          });
+          apoeAssigned++;
+        }
       }
     }
 
@@ -332,6 +490,10 @@ function InstancedNanoparticleScene({
   }, [
     radius,
     shellThickness,
+    formulation.ionizableLipid,
+    formulation.dspcHelper,
+    formulation.pegLipid,
+    effectiveCholesterol,
     pegFrac,
     dspcFrac,
     cholFrac,
@@ -341,10 +503,9 @@ function InstancedNanoparticleScene({
     liveProtonation,
     liveCpp,
     biophysics.cellularUptakeScore,
-    formulation.pegLipid,
   ]);
 
-  // 2. Decoupled RNA Helices & Watson-Crick Rungs (depends ONLY on coreRadius, never rebuilt on pH scrub)
+  // Double-Stranded mRNA/sgRNA Duplex & Superhelices
   const {
     mrnaStrandAGeo,
     mrnaStrandBGeo,
@@ -360,23 +521,23 @@ function InstancedNanoparticleScene({
     const rMats: THREE.Matrix4[] = [];
     const rCols: THREE.Color[] = [];
 
-    const rM = coreRadius * 0.68;
+    const rM = coreRadius * 0.70;
     const stepsM = MAX_RNA_RUNGS;
-    const helixRadius = coreRadius * 0.048;
+    const helixRadius = coreRadius * 0.052;
 
     for (let i = 0; i <= stepsM; i++) {
       const u = i / stepsM;
       const t = u * Math.PI * 10;
-      const phi = u * Math.PI * 3;
-      const radialMod = rM * (0.52 + 0.36 * Math.sin(phi * 2.5));
+      const phiAngle = u * Math.PI * 3;
+      const radialMod = rM * (0.55 + 0.35 * Math.sin(phiAngle * 2.5));
 
       const center = new THREE.Vector3(
-        radialMod * Math.sin(t) * Math.cos(phi),
+        radialMod * Math.sin(t) * Math.cos(phiAngle),
         radialMod * Math.cos(t),
-        radialMod * Math.sin(t) * Math.sin(phi)
+        radialMod * Math.sin(t) * Math.sin(phiAngle)
       );
 
-      const twistAngle = u * Math.PI * 38;
+      const twistAngle = u * Math.PI * 40;
       const offset = new THREE.Vector3(
         Math.cos(twistAngle) * helixRadius,
         Math.sin(twistAngle) * helixRadius * 0.7,
@@ -394,39 +555,44 @@ function InstancedNanoparticleScene({
         const mid = new THREE.Vector3().addVectors(pA, pB).multiplyScalar(0.5);
         dummy.position.copy(mid);
         dummy.quaternion.setFromUnitVectors(upVec, diff.normalize());
-        dummy.scale.set(0.008, len * 0.88, 0.008);
+        dummy.scale.set(0.010, len * 0.90, 0.010);
         dummy.updateMatrix();
         rMats.push(dummy.matrix.clone());
 
-        const isGC = i % 3 !== 0;
-        rCols.push(
-          new THREE.Color(isGC ? tokens.colors.pigments.ochre : tokens.colors.pigments.terracotta)
+        const bpSeed = i % 4;
+        const rungCol = new THREE.Color(
+          bpSeed === 0
+            ? tokens.colors.pigments.verdigris
+            : bpSeed === 1
+            ? tokens.colors.pigments.ochre
+            : bpSeed === 2
+            ? tokens.colors.pigments.petrol
+            : tokens.colors.pigments.terracotta
         );
+        rCols.push(rungCol);
       }
     }
 
-    const curveA = new THREE.CatmullRomCurve3(ptsA, true);
-    const curveB = new THREE.CatmullRomCurve3(ptsB, true);
-    const tubeA = new THREE.TubeGeometry(curveA, 150, coreRadius * 0.022, 7, true);
-    const tubeB = new THREE.TubeGeometry(curveB, 150, coreRadius * 0.018, 7, true);
+    const curveA = new THREE.CatmullRomCurve3(ptsA);
+    const curveB = new THREE.CatmullRomCurve3(ptsB);
+    const tubeA = new THREE.TubeGeometry(curveA, 120, coreRadius * 0.018, 8, false);
+    const tubeB = new THREE.TubeGeometry(curveB, 120, coreRadius * 0.018, 8, false);
 
     const sgrnaPts: THREE.Vector3[] = [];
-    const rS = coreRadius * 0.46;
-    const stepsS = 90;
-    for (let i = 0; i <= stepsS; i++) {
-      const t = (i / stepsS) * Math.PI * 6;
-      const phi = (i / stepsS) * Math.PI * 2;
-      const r = rS * (0.58 + 0.32 * Math.cos(phi * 3));
+    const loopSteps = 70;
+    const rLoop = coreRadius * 0.44;
+    for (let k = 0; k <= loopSteps; k++) {
+      const v = (k / loopSteps) * Math.PI * 2;
       sgrnaPts.push(
         new THREE.Vector3(
-          r * Math.cos(t),
-          r * Math.sin(t) * Math.sin(phi),
-          r * Math.sin(t) * Math.cos(phi)
+          rLoop * Math.cos(v) * (0.8 + 0.2 * Math.cos(v * 3)),
+          rLoop * Math.sin(v * 2) * 0.35,
+          rLoop * Math.sin(v) * 0.75
         )
       );
     }
     const curveS = new THREE.CatmullRomCurve3(sgrnaPts, true);
-    const tubeS = new THREE.TubeGeometry(curveS, 85, coreRadius * 0.024, 6, true);
+    const tubeS = new THREE.TubeGeometry(curveS, 90, coreRadius * 0.025, 8, true);
 
     return {
       mrnaStrandAGeo: tubeA,
@@ -437,7 +603,6 @@ function InstancedNanoparticleScene({
     };
   }, [coreRadius]);
 
-  // Dispose TubeGeometries cleanly when coreRadius changes or component unmounts
   useEffect(() => {
     return () => {
       mrnaStrandAGeo.dispose();
@@ -446,7 +611,7 @@ function InstancedNanoparticleScene({
     };
   }, [mrnaStrandAGeo, mrnaStrandBGeo, sgrnaGeo]);
 
-  // 3. Inverted-Micelle (H_II phase) Ionizable Lipid + Aqueous Pore Nanoclusters
+  // Inverted-Micelle (H_II phase) Ionizable Lipid + Aqueous Nanopores
   const { micelleMatrices, micelleColors } = useMemo(() => {
     const dummy = new THREE.Object3D();
     const mMats: THREE.Matrix4[] = [];
@@ -461,10 +626,10 @@ function InstancedNanoparticleScene({
 
       if (isPointCut(norm.x, norm.y, norm.z, cutawayMode) && i % 2 === 0) continue;
 
-      const shellLayer = 0.28 + 0.64 * ((i % 7) / 7);
+      const shellLayer = 0.28 + 0.65 * ((i % 8) / 8);
       const pos = norm.multiplyScalar(coreRadius * shellLayer);
       dummy.position.copy(pos);
-      const micelleScale = coreRadius * (0.028 + (i % 3) * 0.008);
+      const micelleScale = coreRadius * (0.032 + (i % 3) * 0.010);
       dummy.scale.setScalar(micelleScale);
       dummy.rotation.set(0, 0, 0);
       dummy.updateMatrix();
@@ -474,10 +639,10 @@ function InstancedNanoparticleScene({
       mCols.push(
         new THREE.Color(
           isAqueousPore
-            ? liveProtonation > 0.7
-              ? tokens.colors.accent
-              : '#2c251d'
-            : '#211e1a'
+            ? liveProtonation > 0.65
+              ? tokens.colors.status.success
+              : tokens.colors.accent
+            : '#2c251d'
         )
       );
     }
@@ -488,7 +653,7 @@ function InstancedNanoparticleScene({
     };
   }, [coreRadius, cutawayMode, liveProtonation]);
 
-  // Upload InstancedMesh matrices, colors, and active instance counts to GPU in place
+  // Upload InstancedMesh buffers
   useLayoutEffect(() => {
     if (headsMeshRef.current) {
       headsMeshRef.current.count = headMatrices.length;
@@ -500,6 +665,7 @@ function InstancedNanoparticleScene({
       if (headsMeshRef.current.instanceColor) {
         headsMeshRef.current.instanceColor.needsUpdate = true;
       }
+      headsMeshRef.current.computeBoundingSphere();
     }
 
     if (tailsMeshRef.current) {
@@ -512,10 +678,22 @@ function InstancedNanoparticleScene({
       if (tailsMeshRef.current.instanceColor) {
         tailsMeshRef.current.instanceColor.needsUpdate = true;
       }
+      tailsMeshRef.current.computeBoundingSphere();
     }
 
     if (pegMeshRef.current) {
       pegMeshRef.current.count = pegBaseData.length;
+      if (pegBaseData.length > 0) {
+        for (let i = 0; i < pegBaseData.length; i++) {
+          const b = pegBaseData[i];
+          pegDummy.position.copy(b.normal);
+          pegDummy.scale.setScalar(b.scale);
+          pegDummy.updateMatrix();
+          pegMeshRef.current.setMatrixAt(i, pegDummy.matrix);
+        }
+        pegMeshRef.current.instanceMatrix.needsUpdate = true;
+        pegMeshRef.current.computeBoundingSphere();
+      }
     }
 
     if (micellesMeshRef.current) {
@@ -528,6 +706,7 @@ function InstancedNanoparticleScene({
       if (micellesMeshRef.current.instanceColor) {
         micellesMeshRef.current.instanceColor.needsUpdate = true;
       }
+      micellesMeshRef.current.computeBoundingSphere();
     }
 
     if (rungsMeshRef.current) {
@@ -540,6 +719,7 @@ function InstancedNanoparticleScene({
       if (rungsMeshRef.current.instanceColor) {
         rungsMeshRef.current.instanceColor.needsUpdate = true;
       }
+      rungsMeshRef.current.computeBoundingSphere();
     }
   }, [
     headMatrices,
@@ -553,21 +733,21 @@ function InstancedNanoparticleScene({
     rungColors,
   ]);
 
-  // Real-time Brownian PEG polymer brush dynamics in useFrame
+  // Real-time Brownian PEG polymer dynamics
   const pegDummy = useMemo(() => new THREE.Object3D(), []);
   useFrame((state, delta) => {
     if (groupRef.current && autoRotate) {
-      groupRef.current.rotation.y += delta * 0.2;
+      groupRef.current.rotation.y += delta * 0.18;
     }
 
     if (pegMeshRef.current && visibility.peg && cutawayMode !== 'core' && pegBaseData.length > 0) {
       const time = state.clock.elapsedTime;
       const isBrush = formulation.pegLipid >= 2.2;
-      const wiggleAmp = isBrush ? 0.028 : 0.056;
+      const wiggleAmp = isBrush ? 0.030 : 0.058;
 
       for (let i = 0; i < pegBaseData.length; i++) {
         const b = pegBaseData[i];
-        const phase = time * 2.4 + b.chainIdx * 0.37 + b.t * 5.2;
+        const phase = time * 2.2 + b.chainIdx * 0.35 + b.t * 5.0;
         const mag = b.t * wiggleAmp;
 
         pegDummy.position
@@ -582,10 +762,9 @@ function InstancedNanoparticleScene({
     }
   });
 
-  // Quantized electron-density cross-section texture with explicit WebGL disposal
   const electronDensityTex = useMemo(
-    () => createElectronDensityTexture(quantizedProtonation),
-    [quantizedProtonation]
+    () => createElectronDensityTexture(liveProtonation, opticalMode, saxsSpacing),
+    [liveProtonation, opticalMode, saxsSpacing]
   );
 
   useEffect(() => {
@@ -603,74 +782,103 @@ function InstancedNanoparticleScene({
 
   const getLayerOpacity = (layer: InspectedLayer) => {
     if (inspectedLayer === 'all' || inspectedLayer === layer) return 1.0;
-    return 0.25;
+    return 0.18;
   };
 
   const showOuterShell = cutawayMode !== 'core';
 
   return (
     <group ref={groupRef}>
-      {/* 1. Subsurface Scattering (SSS) Core Aqueous/Lipid Envelope */}
-      {visibility.mrna && (
-        <mesh>
-          <sphereGeometry args={[coreRadius * 0.98, 48, 48]} />
-          <meshPhysicalMaterial
-            color={opticalMode === 'cryo' ? '#211e1a' : '#181613'}
-            transparent
-            opacity={0.44 * getLayerOpacity('mrna')}
-            transmission={opticalMode === 'pbr' ? 0.45 : 0.15}
-            ior={1.48}
-            thickness={0.85}
-            roughness={0.28}
-            metalness={0.05}
-            depthWrite={false}
-          />
-        </mesh>
+      {/* Internal Cutaway Cavity Point Light */}
+      {(cutawayMode === 'quarter' || cutawayMode === 'half' || cutawayMode === 'core') && (
+        <pointLight
+          position={[coreRadius * 0.42, coreRadius * 0.38, coreRadius * 0.48]}
+          intensity={opticalMode === 'cryo' ? 0.75 : 1.25}
+          color={opticalMode === 'cryo' ? '#c8d4dc' : '#f5e8d0'}
+          distance={coreRadius * 3.5}
+        />
       )}
 
-      {/* 2. Bilobed Cas9 / ABE8e TadA* Ribonucleoprotein (RNP) Catalytic Core */}
+      {/* 1–4. Core RNP, Base-Paired mRNA/sgRNA Helices & Inverted Micelles */}
       {visibility.mrna && (
-        <group>
-          <mesh position={[0.14 * coreRadius, 0.06 * coreRadius, 0]}>
-            <sphereGeometry args={[coreRadius * 0.22, 24, 24]} />
+        <group {...bindLayerEvents('mrna')}>
+          {/* Vitrified Cryo-Aqueous Core Envelope Matrix */}
+          <mesh>
+            <sphereGeometry args={[coreRadius * 0.98, 48, 48]} />
+            <meshPhysicalMaterial
+              color={opticalMode === 'cryo' ? '#1c1915' : '#14120f'}
+              transparent
+              opacity={0.28 * getLayerOpacity('mrna')}
+              transmission={opticalMode === 'pbr' ? 0.78 : 0.35}
+              ior={1.34}
+              thickness={0.45}
+              roughness={0.18}
+              metalness={0.02}
+              depthWrite={false}
+              clippingPlanes={clippingPlanes}
+              clipIntersection={cutawayMode === 'quarter'}
+            />
+          </mesh>
+
+          {/* Cas9 REC Lobe */}
+          <mesh position={[0.06 * coreRadius, 0.12 * coreRadius, 0.08 * coreRadius]} rotation={[0.3, 0.4, 0.2]}>
+            <capsuleGeometry args={[coreRadius * 0.13, coreRadius * 0.20, 12, 16]} />
             <meshPhysicalMaterial
               color={tokens.colors.pigments.mauve}
-              roughness={0.35}
-              clearcoat={0.4}
+              roughness={0.32}
+              clearcoat={0.45}
               transparent
-              opacity={0.82 * getLayerOpacity('mrna')}
+              opacity={0.88 * getLayerOpacity('mrna')}
+              emissive={new THREE.Color(tokens.colors.pigments.mauve)}
+              emissiveIntensity={inspectedLayer === 'mrna' ? 0.35 : 0.05}
             />
           </mesh>
-          <mesh position={[-0.12 * coreRadius, -0.05 * coreRadius, 0.08 * coreRadius]}>
-            <sphereGeometry args={[coreRadius * 0.2, 24, 24]} />
+
+          {/* Cas9 NUC Lobe */}
+          <mesh position={[-0.10 * coreRadius, -0.07 * coreRadius, 0.10 * coreRadius]} rotation={[-0.2, -0.3, 0.4]}>
+            <capsuleGeometry args={[coreRadius * 0.12, coreRadius * 0.18, 12, 16]} />
             <meshPhysicalMaterial
               color={coreStatusColor}
-              roughness={0.32}
-              clearcoat={0.5}
+              roughness={0.30}
+              clearcoat={0.50}
               transparent
-              opacity={0.85 * getLayerOpacity('mrna')}
+              opacity={0.90 * getLayerOpacity('mrna')}
+              emissive={new THREE.Color(coreStatusColor)}
+              emissiveIntensity={inspectedLayer === 'mrna' ? 0.40 : 0.08}
             />
           </mesh>
-        </group>
-      )}
 
-      {/* 3. Double-Stranded Base-Paired mRNA Helix & sgRNA Scaffold */}
-      {visibility.mrna && (
-        <group>
+          {/* TadA* Deaminase Domain */}
+          <mesh position={[0.22 * coreRadius, -0.02 * coreRadius, 0.14 * coreRadius]}>
+            <sphereGeometry args={[coreRadius * 0.11, 20, 20]} />
+            <meshPhysicalMaterial
+              color={tokens.colors.pigments.ochre}
+              roughness={0.34}
+              clearcoat={0.55}
+              transparent
+              opacity={0.88 * getLayerOpacity('mrna')}
+              emissive={new THREE.Color(tokens.colors.pigments.ochre)}
+              emissiveIntensity={inspectedLayer === 'mrna' ? 0.35 : 0.06}
+            />
+          </mesh>
+
+          {/* mRNA / sgRNA Helices */}
           <mesh geometry={mrnaStrandAGeo}>
             <meshStandardMaterial
               color={coreStatusColor}
-              roughness={0.38}
-              metalness={0.12}
+              roughness={0.35}
+              metalness={0.15}
               transparent={inspectedLayer !== 'all'}
               opacity={getLayerOpacity('mrna')}
+              emissive={new THREE.Color(coreStatusColor)}
+              emissiveIntensity={inspectedLayer === 'mrna' ? 0.30 : 0.04}
             />
           </mesh>
           <mesh geometry={mrnaStrandBGeo}>
             <meshStandardMaterial
               color={tokens.colors.status.warning}
-              roughness={0.42}
-              metalness={0.1}
+              roughness={0.38}
+              metalness={0.12}
               transparent={inspectedLayer !== 'all'}
               opacity={getLayerOpacity('mrna')}
             />
@@ -678,8 +886,8 @@ function InstancedNanoparticleScene({
           <mesh geometry={sgrnaGeo}>
             <meshStandardMaterial
               color={tokens.colors.pigments.terracotta}
-              roughness={0.45}
-              metalness={0.1}
+              roughness={0.40}
+              metalness={0.12}
               transparent={inspectedLayer !== 'all'}
               opacity={getLayerOpacity('mrna')}
             />
@@ -688,83 +896,92 @@ function InstancedNanoparticleScene({
             ref={rungsMeshRef}
             args={[undefined, undefined, MAX_RNA_RUNGS]}
           >
-            <cylinderGeometry args={[1, 1, 1, 6]} />
+            <cylinderGeometry args={[1, 1, 1, 8]} />
             <meshStandardMaterial
-              roughness={0.5}
+              roughness={0.45}
               transparent={inspectedLayer !== 'all'}
               opacity={getLayerOpacity('mrna')}
+            />
+          </instancedMesh>
+
+          {/* Inverted Micelles */}
+          <instancedMesh
+            ref={micellesMeshRef}
+            args={[undefined, undefined, MAX_MICELLES]}
+          >
+            <sphereGeometry args={[1, 10, 10]} />
+            <meshStandardMaterial
+              roughness={0.50}
+              transparent={inspectedLayer !== 'all'}
+              opacity={0.88 * getLayerOpacity('mrna')}
             />
           </instancedMesh>
         </group>
       )}
 
-      {/* 4. Instanced Inverted-Micelle (H_II) Lipid & Aqueous Pore Clusters */}
-      {visibility.mrna && (
-        <instancedMesh
-          ref={micellesMeshRef}
-          args={[undefined, undefined, MAX_MICELLES]}
-        >
-          <sphereGeometry args={[1, 10, 10]} />
-          <meshStandardMaterial
-            roughness={0.55}
-            transparent={inspectedLayer !== 'all'}
-            opacity={0.85 * getLayerOpacity('mrna')}
-          />
-        </instancedMesh>
-      )}
-
-      {/* 5. Instanced Dual-Chain (sn-1 / sn-2) Hydrophobic Acyl Tails */}
+      {/* 5. Hydrophobic Acyl Tails */}
       {showOuterShell && visibility.tails && (
         <instancedMesh
           ref={tailsMeshRef}
           args={[undefined, undefined, MAX_ACYL_TAILS]}
+          {...bindLayerEvents('tails')}
         >
-          <cylinderGeometry args={[1, 0.85, 1, 6]} />
+          <cylinderGeometry args={[1, 0.88, 1, 8]} />
           <meshStandardMaterial
-            roughness={0.68}
+            roughness={0.65}
             transparent={inspectedLayer !== 'all'}
             opacity={getLayerOpacity('tails')}
+            clippingPlanes={clippingPlanes}
+            clipIntersection={cutawayMode === 'quarter'}
           />
         </instancedMesh>
       )}
 
-      {/* 6. Instanced Outer Monolayer Polar Lipid Headgroups */}
+      {/* 6. Polar Lipid Headgroups */}
       {showOuterShell && visibility.lipids && (
         <instancedMesh
           ref={headsMeshRef}
           args={[undefined, undefined, MAX_LIPID_HEADS]}
+          {...bindLayerEvents('lipids')}
         >
-          <sphereGeometry args={[1, 12, 12]} />
+          <sphereGeometry args={[1, 14, 14]} />
           <meshPhysicalMaterial
-            roughness={opticalMode === 'cryo' ? 0.65 : 0.28}
-            metalness={0.06}
-            clearcoat={opticalMode === 'pbr' ? 0.35 : 0.0}
+            roughness={opticalMode === 'cryo' ? 0.60 : 0.26}
+            metalness={0.08}
+            clearcoat={opticalMode === 'pbr' ? 0.40 : 0.0}
             transparent={inspectedLayer !== 'all'}
             opacity={getLayerOpacity('lipids')}
+            clippingPlanes={clippingPlanes}
+            clipIntersection={cutawayMode === 'quarter'}
           />
         </instancedMesh>
       )}
 
-      {/* 7. Instanced Dynamic PEG2000 Polymer Brush Corona */}
+      {/* 7. PEG2000 Polymer Brush Corona */}
       {showOuterShell && visibility.peg && (
         <instancedMesh
           ref={pegMeshRef}
           args={[undefined, undefined, MAX_PEG_BEADS]}
+          {...bindLayerEvents('peg')}
         >
-          <sphereGeometry args={[1, 8, 8]} />
+          <sphereGeometry args={[1, 10, 10]} />
           <meshPhysicalMaterial
             color={tokens.colors.pigments.petrol}
-            roughness={0.25}
-            transmission={0.3}
+            roughness={0.20}
+            transmission={0.40}
             transparent
-            opacity={0.86 * getLayerOpacity('peg')}
+            opacity={0.88 * getLayerOpacity('peg')}
+            emissive={new THREE.Color(tokens.colors.pigments.petrol)}
+            emissiveIntensity={inspectedLayer === 'peg' ? 0.45 : 0.08}
+            clippingPlanes={clippingPlanes}
+            clipIntersection={cutawayMode === 'quarter'}
           />
         </instancedMesh>
       )}
 
-      {/* 8. Four-Helix Bundle Apolipoprotein E (ApoE) Opsonins */}
+      {/* 8. ApoE Opsonins */}
       {showOuterShell && visibility.apoe && (
-        <group>
+        <group {...bindLayerEvents('apoe')}>
           {apoeClusters.map((apoe, idx) => (
             <group
               key={`apoe-${idx}`}
@@ -772,23 +989,25 @@ function InstancedNanoparticleScene({
               quaternion={apoe.quat}
             >
               {[
-                [-0.022, 0, -0.012],
-                [0.022, 0, -0.012],
-                [-0.018, 0.01, 0.018],
-                [0.018, 0.01, 0.018],
+                [-0.024, 0, -0.013],
+                [0.024, 0, -0.013],
+                [-0.019, 0.01, 0.019],
+                [0.019, 0.01, 0.019],
               ].map((offset, hIdx) => (
                 <mesh
                   key={hIdx}
                   position={offset as [number, number, number]}
                   rotation={[0.15, 0, hIdx % 2 === 0 ? 0.12 : -0.12]}
                 >
-                  <capsuleGeometry args={[0.018, 0.065, 6, 10]} />
+                  <capsuleGeometry args={[0.019, 0.075, 8, 12]} />
                   <meshPhysicalMaterial
                     color={tokens.colors.pigments.mauve}
-                    roughness={0.35}
-                    clearcoat={0.3}
+                    roughness={0.32}
+                    clearcoat={0.45}
                     transparent={inspectedLayer !== 'all'}
                     opacity={getLayerOpacity('apoe')}
+                    emissive={new THREE.Color(tokens.colors.pigments.mauve)}
+                    emissiveIntensity={inspectedLayer === 'apoe' ? 0.45 : 0.06}
                   />
                 </mesh>
               ))}
@@ -797,42 +1016,37 @@ function InstancedNanoparticleScene({
         </group>
       )}
 
-      {/* 9. Hardware Cross-Section Electron-Density Slice Caps */}
+      {/* 9. Precision Cross-Section Caps */}
       {cutawayMode === 'half' && (
-        <mesh position={[0, 0, 0]}>
-          <circleGeometry args={[radius * 0.99, 64]} />
-          <meshBasicMaterial
+        <mesh position={[0, 0, 0]} raycast={() => null}>
+          <circleGeometry args={[radius * 0.995, 64]} />
+          <meshStandardMaterial
             map={electronDensityTex}
-            transparent
-            opacity={0.72}
+            roughness={0.35}
+            metalness={0.06}
             side={THREE.DoubleSide}
-            depthWrite={false}
           />
         </mesh>
       )}
 
       {cutawayMode === 'quarter' && (
         <group>
-          {/* Z = 0 half-disk cap spanning X >= 0 across full vertical axis */}
-          <mesh position={[0, 0, 0]} rotation={[0, 0, 0]}>
-            <ringGeometry args={[coreRadius * 0.15, radius * 0.99, 48, 1, -Math.PI / 2, Math.PI]} />
-            <meshBasicMaterial
+          <mesh position={[0, 0, 0]} rotation={[0, 0, 0]} raycast={() => null}>
+            <circleGeometry args={[radius * 0.995, 64, -Math.PI / 2, Math.PI]} />
+            <meshStandardMaterial
               map={electronDensityTex}
-              transparent
-              opacity={0.58}
+              roughness={0.35}
+              metalness={0.06}
               side={THREE.DoubleSide}
-              depthWrite={false}
             />
           </mesh>
-          {/* X = 0 half-disk cap spanning Z >= 0 across full vertical axis */}
-          <mesh position={[0, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
-            <ringGeometry args={[coreRadius * 0.15, radius * 0.99, 48, 1, -Math.PI / 2, Math.PI]} />
-            <meshBasicMaterial
+          <mesh position={[0, 0, 0]} rotation={[0, -Math.PI / 2, 0]} raycast={() => null}>
+            <circleGeometry args={[radius * 0.995, 64, -Math.PI / 2, Math.PI]} />
+            <meshStandardMaterial
               map={electronDensityTex}
-              transparent
-              opacity={0.58}
+              roughness={0.35}
+              metalness={0.06}
               side={THREE.DoubleSide}
-              depthWrite={false}
             />
           </mesh>
         </group>
@@ -846,7 +1060,9 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
   const [cutawayMode, setCutawayMode] = useState<CutawayMode>('quarter');
   const [opticalMode, setOpticalMode] = useState<OpticalMode>('pbr');
   const [ambientPh, setAmbientPh] = useState<number>(7.4);
-  const [inspectedLayer, setInspectedLayer] = useState<InspectedLayer>('all');
+  const [hoveredLayer, setHoveredLayer] = useState<InspectedLayer | null>(null);
+  const [pinnedLayer, setPinnedLayer] = useState<InspectedLayer>('all');
+  const [snapshotSaved, setSnapshotSaved] = useState<boolean>(false);
   const [visibility, setVisibility] = useState<LayerVisibility>({
     peg: true,
     lipids: true,
@@ -854,18 +1070,110 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
     mrna: true,
     apoe: true,
   });
+  const [viewportSize, setViewportSize] = useState<ViewportSize>('standard');
 
   const controlsRef = useRef<any>(null);
+  const captureFnRef = useRef<(() => string | null) | null>(null);
+
+  const inspectedLayer: InspectedLayer =
+    pinnedLayer !== 'all' ? pinnedLayer : hoveredLayer ?? 'all';
+
+  useEffect(() => {
+    document.body.style.cursor = hoveredLayer ? 'pointer' : 'auto';
+    return () => {
+      document.body.style.cursor = 'auto';
+    };
+  }, [hoveredLayer]);
+
+  // Fullscreen Escape key listener and body scroll lock
+  useEffect(() => {
+    if (viewportSize === 'fullscreen') {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          setViewportSize('standard');
+        }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        document.body.style.overflow = prevOverflow;
+      };
+    }
+  }, [viewportSize]);
+
+  const targetCameraZ = useMemo(() => {
+    return 4.45 + Math.max(0, (biophysics.diameterNm - 50) / 130) * 1.65;
+  }, [biophysics.diameterNm]);
+
+  // View Angle Presets
+  const setCameraView = (view: 'iso' | 'front' | 'top' | 'core') => {
+    if (!controlsRef.current || !controlsRef.current.object) return;
+    const cam = controlsRef.current.object;
+    const d = targetCameraZ;
+
+    if (view === 'iso') {
+      cam.position.set(d * 0.72, d * 0.45, d * 0.72);
+      setCutawayMode('quarter');
+    } else if (view === 'front') {
+      cam.position.set(0, 0, d);
+    } else if (view === 'top') {
+      cam.position.set(0, d, 0.001);
+    } else if (view === 'core') {
+      cam.position.set(0, 0, d * 0.75);
+      setCutawayMode('core');
+    }
+
+    if (controlsRef.current.target) {
+      controlsRef.current.target.set(0, 0, 0);
+    }
+    controlsRef.current.update();
+  };
+
+  const zoomCamera = (factor: number) => {
+    if (!controlsRef.current || !controlsRef.current.object) return;
+    const cam = controlsRef.current.object;
+    cam.position.multiplyScalar(factor);
+    controlsRef.current.update();
+  };
 
   const resetCamera = () => {
     if (controlsRef.current) {
-      controlsRef.current.reset();
+      if (controlsRef.current.object) {
+        controlsRef.current.object.position.set(0, 0, targetCameraZ);
+      }
+      if (controlsRef.current.target) {
+        controlsRef.current.target.set(0, 0, 0);
+      }
+      controlsRef.current.update();
     }
     setAmbientPh(7.4);
+    setCutawayMode('quarter');
+    setPinnedLayer('all');
+    setHoveredLayer(null);
   };
 
   const toggleLayer = (layer: keyof LayerVisibility) => {
     setVisibility((prev) => ({ ...prev, [layer]: !prev[layer] }));
+  };
+
+  const handleSelectMeshLayer = useCallback((layer: InspectedLayer) => {
+    setPinnedLayer((prev) => (prev === layer ? 'all' : layer));
+  }, []);
+
+  const handleExportPngSnapshot = () => {
+    if (!captureFnRef.current) return;
+    const dataUrl = captureFnRef.current();
+    if (!dataUrl) return;
+
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `nanocrispr_lnp_${opticalMode}_pH${ambientPh.toFixed(1)}_${biophysics.diameterNm}nm.png`;
+    a.click();
+
+    setSnapshotSaved(true);
+    setTimeout(() => setSnapshotSaved(false), 1800);
   };
 
   const effectiveCholesterol = Math.max(
@@ -873,79 +1181,102 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
     100 - formulation.ionizableLipid - formulation.dspcHelper - formulation.pegLipid
   );
 
-  // Live De Gennes Polymer Brush & Biophysical Telemetry synchronized with engine
-  const advancedMetrics = useMemo(() => {
-    const pegMolFraction = Math.max(0.002, formulation.pegLipid / 100);
-    const graftingDistanceNm = Math.sqrt(0.65 / pegMolFraction);
-    const deGennesRatio = biophysics.deGennesRfOverD ?? Number((3.43 / graftingDistanceNm).toFixed(2));
+  const advancedMetrics = useMemo(
+    () => calculateAmbientLnpTelemetry(formulation, biophysics, ambientPh),
+    [formulation, biophysics, ambientPh]
+  );
 
-    const liveIonizationPct = Math.round(
-      100 / (1 + Math.pow(10, ambientPh - formulation.lipidPka))
-    );
-
-    const cpp = Number((1.08 + (liveIonizationPct / 100) * 0.58).toFixed(2));
-    const stokesDiffusivity = Number((458 / biophysics.diameterNm).toFixed(1));
-    const saxsSpacing = biophysics.saxsBraggSpacingNm ?? 6.1;
-
-    return {
-      deGennesRatio,
-      graftingDistanceNm: graftingDistanceNm.toFixed(1),
-      liveIonizationPct,
-      cpp,
-      stokesDiffusivity,
-      saxsSpacing,
-      phaseState: cpp >= 1.45 ? 'Inverted Hexagonal (HII Fusion)' : 'Lamellar / Micellar (Lα)',
-    };
-  }, [
-    formulation.pegLipid,
-    formulation.lipidPka,
-    ambientPh,
-    biophysics.diameterNm,
-    biophysics.deGennesRfOverD,
-    biophysics.saxsBraggSpacingNm,
-  ]);
-
-  // Dynamic Scale Bar Width (calibrates 20 nm against particle diameter)
   const scaleBarPx = useMemo(() => {
-    return Math.round(Math.max(26, Math.min(62, (20 / biophysics.diameterNm) * 165)));
+    return Math.round(Math.max(28, Math.min(68, (20 / biophysics.diameterNm) * 175)));
   }, [biophysics.diameterNm]);
 
   const getHudDescription = () => {
     switch (inspectedLayer) {
       case 'peg':
         return {
-          title: `PEG2000 Brush Corona (${formulation.pegLipid.toFixed(1)} mol% • RF/D = ${advancedMetrics.deGennesRatio})`,
-          detail: `De Gennes ${advancedMetrics.deGennesRatio >= 1.0 ? 'Dense Brush (RF/D > 1.0)' : 'Mushroom Regime'} (D = ${advancedMetrics.graftingDistanceNm} nm). D0 = ${advancedMetrics.stokesDiffusivity} µm²/s.`,
+          title: `PEG2000 Hydrated Polymer Corona (${formulation.pegLipid.toFixed(1)} mol% • RF/D = ${advancedMetrics.deGennesRatio})`,
+          detail: `De Gennes ${advancedMetrics.deGennesRatio >= 1.0 ? 'Dense Brush (RF/D > 1.0)' : 'Mushroom Regime'} (Grafting D = ${advancedMetrics.graftingDistanceNm} nm). Diffusivity D0 = ${advancedMetrics.stokesDiffusivity} µm²/s. Provides steric stealth against MPS/RES clearance.`,
+          badge: `σ = ${(1 / (parseFloat(advancedMetrics.graftingDistanceNm) ** 2)).toFixed(3)} ch/nm²`,
         };
       case 'lipids':
         return {
-          title: `Monolayer: Ionizable (${formulation.ionizableLipid.toFixed(1)}%) • DSPC (${formulation.dspcHelper.toFixed(1)}%) • Chol (${effectiveCholesterol.toFixed(1)}%)`,
-          detail: `At pH ${ambientPh.toFixed(1)}: ${advancedMetrics.liveIonizationPct}% protonated • CPP = ${advancedMetrics.cpp} (${advancedMetrics.phaseState}).`,
+          title: `Monolayer Shell: Ionizable (${formulation.ionizableLipid.toFixed(1)}%) • DSPC (${formulation.dspcHelper.toFixed(1)}%) • Chol (${effectiveCholesterol.toFixed(1)}%)`,
+          detail: `Henderson-Hasselbalch at pH ${ambientPh.toFixed(1)}: ${advancedMetrics.liveIonizationPct}% protonated • Packing CPP = ${advancedMetrics.cpp} (${advancedMetrics.phaseState}).`,
+          badge: `pKa = ${formulation.lipidPka.toFixed(2)}`,
         };
       case 'tails':
         return {
-          title: `Dual-Chain (sn-1/sn-2) Hydrophobic Matrix (~2.8 nm • CPP = ${advancedMetrics.cpp})`,
-          detail: `Branched alkyl & stearoyl chains splay from lamellar (pH 7.4) to cone-shaped HII phase (pH 5.5) to disrupt endosomal membranes.`,
+          title: `Dual-Chain (sn-1/sn-2) Hydrophobic Acyl Matrix (~3.2 nm • CPP = ${advancedMetrics.cpp})`,
+          detail: `Branched alkyl & stearoyl chains splay from lamellar bilayer (pH 7.4) to inverted hexagonal HII cone (pH 5.5) to lyse endosomal membranes.`,
+          badge: `Splay: ${advancedMetrics.phaseState.includes('Hexagonal') ? 'Cone (HII)' : 'Cylinder (Lα)'}`,
         };
       case 'mrna':
         return {
-          title: `Quaternary Cas9/ABE8e RNP + Base-Paired mRNA Core (SAXS d ≈ ${advancedMetrics.saxsSpacing} nm)`,
-          detail: `Antiparallel base-paired mRNA/sgRNA helices complexed with protonatable tertiary amines at N/P = ${formulation.npRatio.toFixed(1)}.`,
+          title: `Catalytic Cas9/ABE8e RNP + Base-Paired mRNA Core (SAXS d ≈ ${advancedMetrics.saxsSpacing} nm)`,
+          detail: `Antiparallel mRNA/sgRNA superhelices with bilobed Cas9 enzyme complexed by protonatable tertiary amines at N/P = ${formulation.npRatio.toFixed(1)}.`,
+          badge: `N/P = ${formulation.npRatio.toFixed(1)}:1`,
         };
       case 'apoe':
         return {
-          title: `Apolipoprotein E Four-Helix Bundle Opsonins (Uptake: ${biophysics.cellularUptakeScore}/100)`,
-          detail: `Binds exposed DSPC/cholesterol patches to trigger hepatic LDLR endocytosis; sterically blocked when RF/D > 1.15.`,
+          title: `Apolipoprotein E (ApoE) 4-Helix Bundle Opsonins (Score: ${biophysics.cellularUptakeScore}/100)`,
+          detail: `Amphipathic alpha-helices adsorb to exposed DSPC/cholesterol patches to facilitate hepatic LDLR-mediated endocytosis.`,
+          badge: `${Math.round(biophysics.cellularUptakeScore / 9)} Bundles Bound`,
         };
       default:
         return {
           title: `Lipid Nanoparticle Cutaway (Dh = ${biophysics.diameterNm} nm • ${advancedMetrics.phaseState})`,
-          detail: `GPU-instanced (2,400 lipids / 4,800 acyl chains) • Ambient pH ${ambientPh.toFixed(1)} (${advancedMetrics.liveIonizationPct}% ionized) • RF/D = ${advancedMetrics.deGennesRatio}.`,
+          detail: `Hover or click any 3D structure to isolate • Ambient pH ${ambientPh.toFixed(1)} (${advancedMetrics.liveIonizationPct}% ionized) • Bragg repeat d = ${advancedMetrics.saxsSpacing} nm.`,
+          badge: `SAXS d = ${advancedMetrics.saxsSpacing} nm`,
         };
     }
   };
 
   const hud = getHudDescription();
+
+  // Layer metadata for the interactive inspection rack
+  const layerButtons: {
+    id: keyof LayerVisibility;
+    label: string;
+    sublabel: string;
+    dotColor: string;
+    ringColor: string;
+  }[] = [
+    {
+      id: 'peg',
+      label: 'PEG Corona',
+      sublabel: `${formulation.pegLipid.toFixed(1)}%`,
+      dotColor: tokens.colors.pigments.petrol,
+      ringColor: '#528796',
+    },
+    {
+      id: 'lipids',
+      label: 'Polar Heads',
+      sublabel: '2.4k',
+      dotColor: tokens.colors.pigments.ochre,
+      ringColor: '#cfa052',
+    },
+    {
+      id: 'tails',
+      label: 'Acyl Tails',
+      sublabel: '4.8k',
+      dotColor: '#8a7458',
+      ringColor: '#8a7458',
+    },
+    {
+      id: 'mrna',
+      label: 'Cas9 + mRNA',
+      sublabel: 'RNP',
+      dotColor: tokens.colors.status.success,
+      ringColor: '#5e946c',
+    },
+    {
+      id: 'apoe',
+      label: 'ApoE Opsonins',
+      sublabel: `${biophysics.cellularUptakeScore}`,
+      dotColor: tokens.colors.pigments.mauve,
+      ringColor: '#9e6778',
+    },
+  ];
 
   return (
     <div
@@ -954,108 +1285,152 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
         borderColor: tokens.colors.border,
         borderRadius: tokens.radius,
       }}
-      className="relative w-full h-[360px] overflow-hidden border flex flex-col justify-between"
+      className={
+        viewportSize === 'fullscreen'
+          ? 'fixed inset-0 z-50 bg-[#12110f]/98 p-3 flex flex-col justify-between select-none overflow-hidden shadow-2xl'
+          : `relative w-full ${
+              viewportSize === 'expanded' ? 'min-h-[720px] h-[780px]' : 'min-h-[580px] h-[640px]'
+            } overflow-hidden border flex flex-col justify-between select-none transition-all duration-200`
+      }
     >
-      {/* 1. Top HUD Control Header */}
-      <div className="relative z-10 px-2 py-1.5 flex items-center justify-between gap-2 border-b border-[#332e27] bg-[#181613]/90 backdrop-blur-xs flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <span
+      {/* 1. TOP CONTROL TOOLBAR: Render Modes, Perspectives & Action Tools */}
+      <div className="relative z-10 px-3 py-2 flex items-center justify-between gap-2 border-b border-[#332e27] bg-[#181613]/95 backdrop-blur-md flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Hydrodynamic Diameter Pill */}
+          <div
             style={{
               backgroundColor: tokens.colors.surfaceRaised,
               borderColor: tokens.colors.border,
               borderRadius: tokens.radius,
             }}
-            className="px-2 py-0.5 border font-mono text-[11px] text-[#e8dfd1] font-medium"
+            className="px-2.5 py-1 border font-mono text-[11px] text-[#e8dfd1] font-semibold flex items-center gap-1.5 shadow-xs"
           >
-            Dh: {biophysics.diameterNm} nm
-          </span>
-
-          {/* Cutaway Mode Segmented Selector */}
-          <div
-            style={{
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="flex items-center border overflow-hidden"
-          >
-            {(
-              [
-                { id: 'quarter', label: '90° wedge' },
-                { id: 'half', label: '180° sagittal' },
-                { id: 'full', label: 'Surface' },
-                { id: 'core', label: 'Core' },
-              ] as const
-            ).map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => setCutawayMode(mode.id)}
-                style={{
-                  backgroundColor:
-                    cutawayMode === mode.id
-                      ? tokens.colors.surfaceSelected
-                      : tokens.colors.surfaceRaised,
-                  color:
-                    cutawayMode === mode.id
-                      ? tokens.colors.textPrimary
-                      : tokens.colors.textSecondary,
-                  borderRightColor: tokens.colors.borderMuted,
-                }}
-                className="px-1.5 py-0.5 text-[10px] font-medium border-r last:border-r-0 hover:text-[#e8dfd1] transition cursor-pointer"
-              >
-                {mode.label}
-              </button>
-            ))}
+            <span className="w-2 h-2 rounded-full bg-[#5e946c] animate-pulse" />
+            <span>Dh: {biophysics.diameterNm} nm</span>
           </div>
 
-          {/* Optical Shader Mode Selector */}
+          {/* Cutaway Geometry Mode Segmented Pill */}
           <div
             style={{
               borderColor: tokens.colors.border,
               borderRadius: tokens.radius,
             }}
-            className="hidden sm:flex items-center border overflow-hidden"
+            className="flex items-center border overflow-hidden bg-[#181613] p-0.5"
           >
             {(
               [
-                { id: 'pbr', label: 'PBR' },
-                { id: 'electrostatic', label: 'ζ-Charge' },
-                { id: 'cryo', label: 'Cryo-EM' },
+                { id: 'quarter', label: '90° Wedge', icon: Scissors },
+                { id: 'half', label: '180° Sagittal', icon: CircleDot },
+                { id: 'full', label: 'Surface', icon: Globe },
+                { id: 'core', label: 'Core', icon: Crosshair },
               ] as const
-            ).map((opt) => (
-              <button
-                key={opt.id}
-                onClick={() => setOpticalMode(opt.id)}
-                style={{
-                  backgroundColor:
-                    opticalMode === opt.id
-                      ? tokens.colors.surfaceSelected
-                      : tokens.colors.surfaceRaised,
-                  color:
-                    opticalMode === opt.id
-                      ? tokens.colors.textPrimary
-                      : tokens.colors.textSecondary,
-                  borderRightColor: tokens.colors.borderMuted,
-                }}
-                className="px-1.5 py-0.5 text-[10px] font-medium border-r last:border-r-0 hover:text-[#e8dfd1] transition cursor-pointer"
-              >
-                {opt.label}
-              </button>
-            ))}
+            ).map((mode) => {
+              const IconComponent = mode.icon;
+              const isActive = cutawayMode === mode.id;
+              return (
+                <button
+                  key={mode.id}
+                  onClick={() => setCutawayMode(mode.id)}
+                  style={{
+                    backgroundColor: isActive ? tokens.colors.surfaceSelected : 'transparent',
+                    color: isActive ? tokens.colors.textPrimary : tokens.colors.textSecondary,
+                  }}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-[2px] transition cursor-pointer flex items-center gap-1 ${
+                    isActive ? 'border border-[#4d828f]/60 font-semibold shadow-xs' : 'hover:text-[#e8dfd1]'
+                  }`}
+                  title={`Switch cutaway geometry: ${mode.label}`}
+                >
+                  <IconComponent className="w-3 h-3 text-[#4d828f]" />
+                  <span>{mode.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Optical Shader Mode Segmented Pill */}
+          <div
+            style={{
+              borderColor: tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="hidden sm:flex items-center border overflow-hidden bg-[#181613] p-0.5"
+          >
+            {(
+              [
+                { id: 'pbr', label: 'PBR', icon: Sparkles },
+                { id: 'electrostatic', label: 'ζ-Charge', icon: Activity },
+                { id: 'cryo', label: 'Cryo-EM', icon: CircleDot },
+              ] as const
+            ).map((opt) => {
+              const IconComp = opt.icon;
+              const isActive = opticalMode === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => setOpticalMode(opt.id)}
+                  style={{
+                    backgroundColor: isActive ? tokens.colors.surfaceSelected : 'transparent',
+                    color: isActive ? tokens.colors.textPrimary : tokens.colors.textSecondary,
+                  }}
+                  className={`px-2 py-0.5 text-[10px] font-medium rounded-[2px] transition cursor-pointer flex items-center gap-1 ${
+                    isActive ? 'border border-[#cfa052]/60 font-semibold shadow-xs' : 'hover:text-[#e8dfd1]'
+                  }`}
+                  title={`Switch rendering mode: ${opt.label}`}
+                >
+                  <IconComp className="w-2.5 h-2.5 text-[#cfa052]" />
+                  <span>{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Camera View Angle Presets */}
+          <div className="hidden lg:flex items-center gap-1 border-l border-[#332e27] pl-2 text-[10px]">
+            <span className="text-[#70675c] text-[9px] uppercase tracking-wider font-semibold">View:</span>
+            <button
+              onClick={() => setCameraView('iso')}
+              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
+              title="Isometric 45° cutaway beauty perspective"
+            >
+              ISO 45°
+            </button>
+            <button
+              onClick={() => setCameraView('front')}
+              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
+              title="Front coronal view"
+            >
+              Front
+            </button>
+            <button
+              onClick={() => setCameraView('top')}
+              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
+              title="Polar top view"
+            >
+              Top
+            </button>
+            <button
+              onClick={() => setCameraView('core')}
+              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
+              title="Zoom into inner ribonucleoprotein core"
+            >
+              Core
+            </button>
           </div>
         </div>
 
-        {/* Right: Interactive Endosomal pH Titration Scrubber + Camera Controls */}
-        <div className="flex items-center gap-2">
+        {/* Right Action Stack: pH Titration Controller & Utilities */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Interactive Endosomal pH Controller with Milestone Chips */}
           <div
             style={{
               backgroundColor: tokens.colors.surfaceRaised,
               borderColor: tokens.colors.border,
               borderRadius: tokens.radius,
             }}
-            className="flex items-center gap-1.5 px-2 py-0.5 border text-[10px]"
-            title="Scrub ambient pH from systemic blood (7.4) to late endosome (5.5) to observe H_II phase transition"
+            className="flex items-center gap-1.5 px-2.5 py-1 border text-[10px] shadow-xs"
+            title="Titrate ambient pH to observe Henderson-Hasselbalch protonation and HII hexagonal phase fusion"
           >
-            <span className="text-[#a69b8d]">pH:</span>
+            <span className="text-[#a69b8d] font-semibold">pH:</span>
             <input
               type="range"
               min="5.0"
@@ -1067,126 +1442,290 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
               className="w-14 h-1 cursor-pointer"
             />
             <span
-              className={`font-mono font-semibold ${
-                ambientPh <= 5.8 ? 'text-[#5e946c]' : 'text-[#e8dfd1]'
+              className={`font-mono font-bold px-1.5 py-0.2 rounded-[2px] ${
+                ambientPh <= 5.8
+                  ? 'bg-[#5e946c]/20 text-[#73a880] border border-[#5e946c]/40'
+                  : ambientPh <= 6.5
+                  ? 'bg-[#c98a3b]/20 text-[#df9e51] border border-[#c98a3b]/40'
+                  : 'bg-[#211e1a] text-[#e8dfd1] border border-[#332e27]'
               }`}
             >
               {ambientPh.toFixed(1)}
             </span>
+
+            {/* Quick-Jump Milestone Chips */}
+            <div className="hidden xl:flex items-center gap-1 border-l border-[#332e27] pl-1.5">
+              <button
+                onClick={() => setAmbientPh(7.4)}
+                className={`px-1 py-0.2 text-[9px] rounded-[2px] transition cursor-pointer ${
+                  ambientPh === 7.4 ? 'bg-[#528796] text-[#fff] font-bold' : 'text-[#70675c] hover:text-[#e8dfd1]'
+                }`}
+                title="Jump to Systemic Blood pH 7.4"
+              >
+                7.4
+              </button>
+              <button
+                onClick={() => setAmbientPh(6.2)}
+                className={`px-1 py-0.2 text-[9px] rounded-[2px] transition cursor-pointer ${
+                  ambientPh === 6.2 ? 'bg-[#c98a3b] text-[#fff] font-bold' : 'text-[#70675c] hover:text-[#e8dfd1]'
+                }`}
+                title="Jump to Early Endosome pH 6.2"
+              >
+                6.2
+              </button>
+              <button
+                onClick={() => setAmbientPh(5.5)}
+                className={`px-1 py-0.2 text-[9px] rounded-[2px] transition cursor-pointer ${
+                  ambientPh === 5.5 ? 'bg-[#5e946c] text-[#fff] font-bold' : 'text-[#70675c] hover:text-[#e8dfd1]'
+                }`}
+                title="Jump to Late Endosome pH 5.5 (HII Hexagonal Phase)"
+              >
+                5.5
+              </button>
+            </div>
           </div>
 
-          <button
-            onClick={() => setAutoRotate(!autoRotate)}
-            style={{
-              backgroundColor: tokens.colors.surfaceRaised,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="px-2 py-0.5 text-[10px] text-[#a69b8d] hover:text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer"
-          >
-            {autoRotate ? 'Pause' : 'Rotate'}
-          </button>
-          <button
-            onClick={resetCamera}
-            style={{
-              backgroundColor: tokens.colors.surfaceRaised,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="px-2 py-0.5 text-[10px] text-[#a69b8d] hover:text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer"
-          >
-            Reset
-          </button>
+          {/* Action Buttons: Orbit, Reset & Publication Snapshot */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setAutoRotate(!autoRotate)}
+              style={{
+                backgroundColor: autoRotate ? tokens.colors.surfaceSelected : tokens.colors.surfaceRaised,
+                borderColor: autoRotate ? '#4d828f' : tokens.colors.border,
+                borderRadius: tokens.radius,
+              }}
+              className="px-2 py-1 text-[10px] text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer flex items-center gap-1"
+              title={autoRotate ? 'Pause 3D rotation' : 'Start smooth orbit rotation'}
+            >
+              {autoRotate ? (
+                <>
+                  <Pause className="w-2.5 h-2.5 text-[#e0ad5a]" />
+                  <span>Pause</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-2.5 h-2.5 text-[#5e946c]" />
+                  <span>Orbit</span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={resetCamera}
+              style={{
+                backgroundColor: tokens.colors.surfaceRaised,
+                borderColor: tokens.colors.border,
+                borderRadius: tokens.radius,
+              }}
+              className="px-2 py-1 text-[10px] text-[#a69b8d] hover:text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer flex items-center gap-1"
+              title="Reset camera and viewport parameters"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              <span>Reset</span>
+            </button>
+
+            <button
+              onClick={handleExportPngSnapshot}
+              style={{
+                backgroundColor: snapshotSaved
+                  ? tokens.colors.status.successSubtle
+                  : tokens.colors.surfaceRaised,
+                borderColor: snapshotSaved ? tokens.colors.status.success : tokens.colors.border,
+                borderRadius: tokens.radius,
+              }}
+              className="px-2.5 py-1 text-[10px] text-[#e8dfd1] hover:bg-[#2a2621] border transition cursor-pointer flex items-center gap-1.5 shadow-xs font-medium"
+              title="Export high-resolution 1080p publication PNG of the 3D cutaway"
+            >
+              {snapshotSaved ? (
+                <Check className="w-3 h-3 text-[#5e946c]" />
+              ) : (
+                <Camera className="w-3 h-3 text-[#4d828f]" />
+              )}
+              <span>{snapshotSaved ? 'Saved!' : 'PNG'}</span>
+              <span className="text-[8px] font-mono text-[#70675c] px-1 bg-[#181613] rounded">1080p</span>
+            </button>
+
+            {/* Viewport Size Controls: Standard vs Expanded vs Fullscreen */}
+            <div className="flex items-center gap-1 border-l border-[#332e27] pl-1.5">
+              <button
+                onClick={() =>
+                  setViewportSize((prev) => (prev === 'expanded' ? 'standard' : 'expanded'))
+                }
+                style={{
+                  backgroundColor:
+                    viewportSize === 'expanded'
+                      ? tokens.colors.surfaceSelected
+                      : tokens.colors.surfaceRaised,
+                  borderColor:
+                    viewportSize === 'expanded' ? '#4d828f' : tokens.colors.border,
+                  borderRadius: tokens.radius,
+                }}
+                className={`px-2 py-1 text-[10px] border transition cursor-pointer flex items-center gap-1 ${
+                  viewportSize === 'expanded'
+                    ? 'text-[#e8dfd1] font-semibold'
+                    : 'text-[#a69b8d] hover:text-[#e8dfd1] hover:bg-[#2a2621]'
+                }`}
+                title={
+                  viewportSize === 'expanded'
+                    ? 'Switch to Standard viewing height (640px)'
+                    : 'Expand viewing area height (780px)'
+                }
+              >
+                {viewportSize === 'expanded' ? (
+                  <>
+                    <Shrink className="w-2.5 h-2.5 text-[#4d828f]" />
+                    <span>640px</span>
+                  </>
+                ) : (
+                  <>
+                    <Expand className="w-2.5 h-2.5 text-[#a69b8d]" />
+                    <span>Expand</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() =>
+                  setViewportSize((prev) => (prev === 'fullscreen' ? 'standard' : 'fullscreen'))
+                }
+                style={{
+                  backgroundColor:
+                    viewportSize === 'fullscreen'
+                      ? tokens.colors.surfaceSelected
+                      : tokens.colors.surfaceRaised,
+                  borderColor:
+                    viewportSize === 'fullscreen' ? '#5e946c' : tokens.colors.border,
+                  borderRadius: tokens.radius,
+                }}
+                className={`px-2 py-1 text-[10px] border transition cursor-pointer flex items-center gap-1 ${
+                  viewportSize === 'fullscreen'
+                    ? 'text-[#73a880] font-semibold ring-1 ring-[#5e946c]/50'
+                    : 'text-[#a69b8d] hover:text-[#e8dfd1] hover:bg-[#2a2621]'
+                }`}
+                title={
+                  viewportSize === 'fullscreen'
+                    ? 'Exit Fullscreen (Esc)'
+                    : 'Enter Fullscreen Immersive Theater View'
+                }
+              >
+                {viewportSize === 'fullscreen' ? (
+                  <>
+                    <Minimize2 className="w-2.5 h-2.5 text-[#5e946c]" />
+                    <span>Exit</span>
+                  </>
+                ) : (
+                  <>
+                    <Maximize2 className="w-2.5 h-2.5" />
+                    <span>Full</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* 2. Interactive Layer Selector Bar */}
-      <div className="relative z-10 px-2 py-1 flex items-center justify-between text-[10px] text-[#a69b8d] border-b border-[#24201b] bg-[#151310]/80">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-[#70675c]">Layers:</span>
+      {/* 2. INTERACTIVE LAYER MATRIX: Visibility Toggles + Solo/Pinning + Particle Counts */}
+      <div className="relative z-10 px-3 py-1.5 flex items-center justify-between text-[10px] text-[#a69b8d] border-b border-[#24201b] bg-[#151310]/90 backdrop-blur-xs flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[#70675c] font-semibold uppercase tracking-wider text-[9px]">
+            Layers:
+          </span>
 
-          <button
-            onClick={() => toggleLayer('peg')}
-            onMouseEnter={() => setInspectedLayer('peg')}
-            onMouseLeave={() => setInspectedLayer('all')}
-            className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.peg ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#528796] inline-block" />
-            PEG corona ({formulation.pegLipid.toFixed(1)}%)
-          </button>
+          {layerButtons.map((layer) => {
+            const isVisible = visibility[layer.id];
+            const isIsolated = inspectedLayer === layer.id;
+            const isPinned = pinnedLayer === layer.id;
 
-          <button
-            onClick={() => toggleLayer('lipids')}
-            onMouseEnter={() => setInspectedLayer('lipids')}
-            onMouseLeave={() => setInspectedLayer('all')}
-            className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.lipids ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#cfa052] inline-block" />
-            Lipid heads (2.4k)
-          </button>
+            return (
+              <div
+                key={layer.id}
+                style={{
+                  borderColor: isPinned ? layer.ringColor : isIsolated ? '#4d828f' : '#2b2620',
+                  backgroundColor: isPinned ? `${layer.ringColor}18` : isIsolated ? '#26221c' : '#1c1a16',
+                }}
+                className={`flex items-center rounded-[3px] border overflow-hidden transition-all shadow-xs ${
+                  isPinned ? 'ring-1' : ''
+                }`}
+                style-ringcolor={layer.ringColor}
+              >
+                {/* Visibility Eye Toggle */}
+                <button
+                  onClick={() => toggleLayer(layer.id)}
+                  className={`px-1.5 py-1 hover:bg-[#2f2a23] transition cursor-pointer border-r border-[#2b2620] ${
+                    isVisible ? 'text-[#a69b8d] hover:text-[#e8dfd1]' : 'text-[#54493b] hover:text-[#70675c]'
+                  }`}
+                  title={`${isVisible ? 'Hide' : 'Show'} ${layer.label}`}
+                >
+                  {isVisible ? <Eye className="w-2.5 h-2.5" /> : <EyeOff className="w-2.5 h-2.5" />}
+                </button>
 
-          <button
-            onClick={() => toggleLayer('tails')}
-            onMouseEnter={() => setInspectedLayer('tails')}
-            onMouseLeave={() => setInspectedLayer('all')}
-            className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.tails ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#6e5d49] inline-block" />
-            sn-1/sn-2 tails (4.8k)
-          </button>
-
-          <button
-            onClick={() => toggleLayer('mrna')}
-            onMouseEnter={() => setInspectedLayer('mrna')}
-            onMouseLeave={() => setInspectedLayer('all')}
-            className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.mrna ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#5e946c] inline-block" />
-            RNP + dsRNA core
-          </button>
-
-          <button
-            onClick={() => toggleLayer('apoe')}
-            onMouseEnter={() => setInspectedLayer('apoe')}
-            onMouseLeave={() => setInspectedLayer('all')}
-            className={`flex items-center gap-1 transition cursor-pointer ${
-              visibility.apoe ? 'text-[#e8dfd1]' : 'text-[#70675c] line-through'
-            }`}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-[#9e6778] inline-block" />
-            ApoE ({biophysics.cellularUptakeScore})
-          </button>
+                {/* Layer Focus / Solo Click Button */}
+                <button
+                  onClick={() => handleSelectMeshLayer(layer.id)}
+                  onMouseEnter={() => setHoveredLayer(layer.id)}
+                  onMouseLeave={() => setHoveredLayer(null)}
+                  className={`px-2 py-1 flex items-center gap-1.5 hover:bg-[#2f2a23] transition cursor-pointer ${
+                    !isVisible ? 'opacity-40 line-through' : ''
+                  }`}
+                  title={`Click to focus / pin ${layer.label} in 3D`}
+                >
+                  <span
+                    style={{ backgroundColor: layer.dotColor }}
+                    className={`w-1.5 h-1.5 rounded-full inline-block ${isPinned ? 'ring-2 ring-white/50' : ''}`}
+                  />
+                  <span className={`font-medium ${isPinned ? 'text-[#e8dfd1] font-semibold' : 'text-[#c7bcb0]'}`}>
+                    {layer.label}
+                  </span>
+                  <span className="text-[9px] font-mono text-[#70675c] bg-[#12110f]/70 px-1 py-0.2 rounded">
+                    {layer.sublabel}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
         </div>
 
-        <div className="text-[10px] font-mono text-[#70675c] hidden md:block">
-          CPP: {advancedMetrics.cpp} • RF/D: {advancedMetrics.deGennesRatio}
+        {/* Pinned Layer State & Real-time Telemetry Pill */}
+        <div className="flex items-center gap-2 text-[10px] font-mono text-[#70675c]">
+          {pinnedLayer !== 'all' && (
+            <button
+              onClick={() => setPinnedLayer('all')}
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded-[2px] bg-[#4d828f]/20 border border-[#4d828f]/60 text-[#98c2cc] hover:text-[#e8dfd1] hover:bg-[#4d828f]/30 cursor-pointer font-sans text-[10px] font-semibold transition"
+              title="Click to unlock and show all layers together"
+            >
+              <Lock className="w-2.5 h-2.5" />
+              <span>PINNED: {pinnedLayer.toUpperCase()}</span>
+              <span className="text-[9px] text-[#e27b6c] ml-0.5 font-bold">✕ Unlock</span>
+            </button>
+          )}
+          <span className="hidden md:inline font-mono">
+            CPP: <strong className="text-[#e8dfd1]">{advancedMetrics.cpp}</strong> • RF/D:{' '}
+            <strong className="text-[#e8dfd1]">{advancedMetrics.deGennesRatio}</strong>
+          </span>
         </div>
       </div>
 
-      {/* 3. Three.js Instanced WebGL Viewport */}
-      <div className="flex-1 w-full relative">
+      {/* 3. THREE.JS INSTANCED WEBGL VIEWPORT */}
+      <div className="flex-1 w-full relative min-h-[380px]">
         <Canvas
-          camera={{ position: [0, 0, 4.6], fov: 40 }}
+          camera={{ position: [0, 0, targetCameraZ], fov: 40 }}
           dpr={[1, 2]}
-          gl={{ localClippingEnabled: true }}
+          gl={{ localClippingEnabled: true, preserveDrawingBuffer: true }}
+          onPointerMissed={() => setPinnedLayer('all')}
           onCreated={({ gl }) => {
             gl.localClippingEnabled = true;
             gl.toneMapping = THREE.ACESFilmicToneMapping;
-            gl.toneMappingExposure = 1.08;
+            gl.toneMappingExposure = 1.12;
           }}
         >
-          <ambientLight intensity={opticalMode === 'cryo' ? 0.55 : 0.8} />
-          <directionalLight position={[6, 9, 6]} intensity={opticalMode === 'cryo' ? 0.85 : 1.25} />
-          <directionalLight position={[-6, -4, -5]} intensity={0.4} color="#8a9ba8" />
-          <RendererConfig diameter={biophysics.diameterNm} />
+          {/* Studio Balanced 3-Point Lighting */}
+          <ambientLight intensity={opticalMode === 'cryo' ? 0.60 : 0.85} />
+          <directionalLight position={[5, 8, 5]} intensity={opticalMode === 'cryo' ? 0.95 : 1.35} color="#fffcf5" />
+          <directionalLight position={[-6, 2, 4]} intensity={0.55} color="#8a9ba8" />
+          <directionalLight position={[-3, -5, -6]} intensity={0.75} color="#7baab8" />
+
+          <RendererConfig diameter={biophysics.diameterNm} captureRef={captureFnRef} />
           <InstancedNanoparticleScene
             formulation={formulation}
             biophysics={biophysics}
@@ -1194,14 +1733,54 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
             cutawayMode={cutawayMode}
             opticalMode={opticalMode}
             ambientPh={ambientPh}
+            liveProtonation={advancedMetrics.liveProtonationFraction}
+            liveCpp={advancedMetrics.cpp}
+            saxsSpacing={advancedMetrics.saxsSpacing}
             visibility={visibility}
             inspectedLayer={inspectedLayer}
+            onHoverLayer={setHoveredLayer}
+            onSelectLayer={handleSelectMeshLayer}
           />
-          <OrbitControls ref={controlsRef} enableZoom={true} autoRotate={false} enableDamping />
+          <OrbitControls ref={controlsRef} enableZoom={true} autoRotate={false} enableDamping dampingFactor={0.05} />
         </Canvas>
 
-        {/* Calibrated Cryo-TEM Physical Scale Bar (Lower Left Overlay) */}
-        <div className="absolute bottom-2 left-2.5 pointer-events-none flex flex-col gap-0.5 text-[9px] font-mono text-[#a69b8d]">
+        {/* Floating In-Canvas Viewport Controls (Top-Left) */}
+        <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 z-10">
+          <div className="flex items-center gap-1 p-1 rounded-[3px] bg-[#12110f]/85 border border-[#332e27] backdrop-blur-xs shadow-md">
+            <button
+              onClick={() => zoomCamera(0.85)}
+              className="p-1 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] transition cursor-pointer"
+              title="Zoom In"
+            >
+              <Plus className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => zoomCamera(1.18)}
+              className="p-1 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] transition cursor-pointer"
+              title="Zoom Out"
+            >
+              <Minus className="w-3 h-3" />
+            </button>
+            <button
+              onClick={resetCamera}
+              className="p-1 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] transition cursor-pointer"
+              title="Reset View"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+
+        {/* Floating Layer Quick Telemetry Badge (Top-Right) */}
+        {inspectedLayer !== 'all' && (
+          <div className="absolute top-2.5 right-2.5 pointer-events-none flex items-center gap-1.5 px-2.5 py-1 rounded-[3px] bg-[#12110f]/90 border border-[#4d828f]/60 text-[10px] font-mono text-[#98c2cc] backdrop-blur-xs shadow-lg">
+            <Sparkles className="w-3 h-3 text-[#5e946c]" />
+            <span>{hud.badge}</span>
+          </div>
+        )}
+
+        {/* Calibrated Cryo-TEM Physical Scale Bar (Bottom-Left) */}
+        <div className="absolute bottom-2.5 left-2.5 pointer-events-none flex flex-col gap-0.5 text-[9px] font-mono text-[#a69b8d] bg-[#12110f]/80 px-2 py-1 rounded-[2px] border border-[#2b2620] backdrop-blur-xs">
           <div className="flex items-center gap-1.5">
             <div
               style={{ width: `${scaleBarPx}px` }}
@@ -1217,8 +1796,13 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
           </span>
         </div>
 
-        {/* Live Endosomal Compartment Badge (Lower Right Overlay) */}
-        <div className="absolute bottom-2 right-2.5 pointer-events-none text-[9px] font-mono px-2 py-0.5 rounded border border-[#332e27] bg-[#181613]/85 text-[#a69b8d]">
+        {/* Live Endosomal Compartment Badge (Bottom-Right) */}
+        <div className="absolute bottom-2.5 right-2.5 pointer-events-none text-[9px] font-mono px-2.5 py-1 rounded-[2px] border border-[#332e27] bg-[#181613]/90 text-[#a69b8d] flex items-center gap-1.5 backdrop-blur-xs shadow-md">
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              ambientPh >= 7.1 ? 'bg-[#528796]' : ambientPh >= 6.0 ? 'bg-[#c98a3b]' : 'bg-[#5e946c] animate-pulse'
+            }`}
+          />
           {ambientPh >= 7.1
             ? 'Systemic Blood (pH 7.4)'
             : ambientPh >= 6.0
@@ -1227,16 +1811,18 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
         </div>
       </div>
 
-      {/* 4. Bottom Contextual Biophysical HUD Inspector */}
-      <div className="relative z-10 px-2.5 py-1.5 border-t border-[#332e27] bg-[#181613]/92 flex items-center justify-between text-[11px]">
+      {/* 4. BOTTOM CONTEXTUAL BIOPHYSICAL HUD INSPECTOR */}
+      <div className="relative z-10 px-3 py-2 border-t border-[#332e27] bg-[#181613]/95 flex items-center justify-between text-[11px] flex-wrap gap-2">
         <div className="flex flex-col gap-0.5 leading-tight">
           <div className="font-medium text-[#e8dfd1] flex items-center gap-2">
             <span>{hud.title}</span>
           </div>
           <span className="text-[10px] text-[#a69b8d]">{hud.detail}</span>
         </div>
-        <div className="text-right text-[10px] font-mono text-[#70675c] shrink-0 ml-3">
-          Zeta: {biophysics.zetaPotentialMv > 0 ? `+${biophysics.zetaPotentialMv}` : biophysics.zetaPotentialMv} mV • PDI: {biophysics.pdi.toFixed(2)}
+        <div className="text-right text-[10px] font-mono text-[#70675c] shrink-0 ml-auto">
+          Zeta: <strong className="text-[#e8dfd1]">{biophysics.zetaPotentialMv > 0 ? `+${biophysics.zetaPotentialMv}` : biophysics.zetaPotentialMv} mV</strong> • PDI:{' '}
+          <strong className="text-[#e8dfd1]">{biophysics.pdi.toFixed(2)}</strong> • Tropism:{' '}
+          <strong className="text-[#e8dfd1]">{biophysics.organTropism.liver}% Liver</strong>
         </div>
       </div>
     </div>

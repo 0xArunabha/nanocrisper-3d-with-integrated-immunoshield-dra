@@ -1,6 +1,59 @@
 // src/engines/nanotech/lnpSimulator.ts
 import type { LnpFormulation, LnpBiophysicsResult } from '../types';
 
+export interface AmbientLnpTelemetry {
+  floryRadiusNm: number;
+  graftingDistanceNm: string;
+  deGennesRatio: number;
+  liveIonizationPct: number;
+  liveProtonationFraction: number;
+  cpp: number;
+  stokesDiffusivity: number;
+  saxsSpacing: number;
+  phaseState: 'Inverted Hexagonal (HII Fusion)' | 'Lamellar / Micellar (Lα)';
+}
+
+/**
+ * Computes real-time ambient pH titration & polymer scaling telemetry for the 3D viewport HUD.
+ * Keeps all Henderson-Hasselbalch, De Gennes, Israelachvili CPP, and Stokes-Einstein math
+ * strictly inside the nanotech engine layer.
+ */
+export function calculateAmbientLnpTelemetry(
+  form: LnpFormulation,
+  biophysics: LnpBiophysicsResult,
+  ambientPh: number
+): AmbientLnpTelemetry {
+  // Flory radius of PEG-2000 (N ~ 45 monomers, monomer length a ~ 0.35 nm): R_F = a * N^(3/5) ~ 3.43 nm
+  const floryRadiusNm = 3.43;
+  const pegMolFraction = Math.max(0.002, form.pegLipid / 100);
+  const graftingDistanceVal = Math.sqrt(0.65 / pegMolFraction);
+  const deGennesRatio =
+    biophysics.deGennesRfOverD ?? Number((floryRadiusNm / graftingDistanceVal).toFixed(2));
+
+  // Live Henderson-Hasselbalch ionization at user-selected ambient pH
+  const liveProtonationFraction = 1 / (1 + Math.pow(10, ambientPh - form.lipidPka));
+  const liveIonizationPct = Math.round(liveProtonationFraction * 100);
+
+  // Israelachvili Critical Packing Parameter (CPP = v / (a0 * lc))
+  const cpp = Number((1.08 + (liveIonizationPct / 100) * 0.58).toFixed(2));
+
+  // Stokes-Einstein diffusivity in blood at 37°C (D0 = kB*T / (3*pi*eta*Dh))
+  const stokesDiffusivity = Number((458 / Math.max(1, biophysics.diameterNm)).toFixed(1));
+  const saxsSpacing = biophysics.saxsBraggSpacingNm ?? 6.1;
+
+  return {
+    floryRadiusNm,
+    graftingDistanceNm: graftingDistanceVal.toFixed(1),
+    deGennesRatio,
+    liveIonizationPct,
+    liveProtonationFraction,
+    cpp,
+    stokesDiffusivity,
+    saxsSpacing,
+    phaseState: cpp >= 1.45 ? 'Inverted Hexagonal (HII Fusion)' : 'Lamellar / Micellar (Lα)',
+  };
+}
+
 /**
  * Nanotech LNP Biophysical & CMC Simulation Engine.
  * Models 4-component lipid nanoparticle assembly, Henderson-Hasselbalch ionization,
