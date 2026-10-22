@@ -17,8 +17,6 @@ import {
   Activity,
   Play,
   Pause,
-  Plus,
-  Minus,
   Crosshair,
   Maximize2,
   Minimize2,
@@ -304,19 +302,6 @@ function InstancedNanoparticleScene({
   const dspcFrac = formulation.dspcHelper / 100;
   const cholFrac = effectiveCholesterol / 100;
 
-  const clippingPlanes = useMemo(() => {
-    if (cutawayMode === 'quarter') {
-      return [
-        new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
-        new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
-      ];
-    }
-    if (cutawayMode === 'half') {
-      return [new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)];
-    }
-    return [];
-  }, [cutawayMode]);
-
   // High-density Fibonacci lattice: 2,400 outer lipids + 4,800 sn-1/sn-2 acyl chains
   const {
     headMatrices,
@@ -378,11 +363,11 @@ function InstancedNanoparticleScene({
         type = 'peg';
         headScale = 0.040;
         col.set(tokens.colors.pigments.petrol);
-      } else if (seed < pegFrac + dspcFrac) {
+      } else if (seed < pegFrac * pegSheddingFactor + dspcFrac) {
         type = 'dspc';
         headScale = 0.041;
         col.set(tokens.colors.pigments.ivory);
-      } else if (seed < pegFrac + dspcFrac + cholFrac) {
+      } else if (seed < pegFrac * pegSheddingFactor + dspcFrac + cholFrac) {
         type = 'chol';
         headScale = 0.033;
         tailLen = shellThickness * 0.54;
@@ -804,7 +789,15 @@ function InstancedNanoparticleScene({
         <group {...bindLayerEvents('mrna')}>
           {/* Vitrified Cryo-Aqueous Core Envelope Matrix */}
           <mesh>
-            <sphereGeometry args={[coreRadius * 0.98, 48, 48]} />
+            <sphereGeometry
+              args={
+                cutawayMode === 'quarter'
+                  ? [coreRadius * 0.98, 48, 48, Math.PI, Math.PI * 1.5]
+                  : cutawayMode === 'half'
+                  ? [coreRadius * 0.98, 48, 48, Math.PI, Math.PI]
+                  : [coreRadius * 0.98, 48, 48]
+              }
+            />
             <meshPhysicalMaterial
               color={opticalMode === 'cryo' ? '#1c1915' : '#14120f'}
               transparent
@@ -815,8 +808,7 @@ function InstancedNanoparticleScene({
               roughness={0.18}
               metalness={0.02}
               depthWrite={false}
-              clippingPlanes={clippingPlanes}
-              clipIntersection={cutawayMode === 'quarter'}
+              side={THREE.DoubleSide}
             />
           </mesh>
 
@@ -931,8 +923,6 @@ function InstancedNanoparticleScene({
             roughness={0.65}
             transparent={inspectedLayer !== 'all'}
             opacity={getLayerOpacity('tails')}
-            clippingPlanes={clippingPlanes}
-            clipIntersection={cutawayMode === 'quarter'}
           />
         </instancedMesh>
       )}
@@ -951,8 +941,6 @@ function InstancedNanoparticleScene({
             clearcoat={opticalMode === 'pbr' ? 0.40 : 0.0}
             transparent={inspectedLayer !== 'all'}
             opacity={getLayerOpacity('lipids')}
-            clippingPlanes={clippingPlanes}
-            clipIntersection={cutawayMode === 'quarter'}
           />
         </instancedMesh>
       )}
@@ -973,8 +961,6 @@ function InstancedNanoparticleScene({
             opacity={0.88 * getLayerOpacity('peg')}
             emissive={new THREE.Color(tokens.colors.pigments.petrol)}
             emissiveIntensity={inspectedLayer === 'peg' ? 0.45 : 0.08}
-            clippingPlanes={clippingPlanes}
-            clipIntersection={cutawayMode === 'quarter'}
           />
         </instancedMesh>
       )}
@@ -1106,37 +1092,6 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
   const targetCameraZ = useMemo(() => {
     return 4.45 + Math.max(0, (biophysics.diameterNm - 50) / 130) * 1.65;
   }, [biophysics.diameterNm]);
-
-  // View Angle Presets
-  const setCameraView = (view: 'iso' | 'front' | 'top' | 'core') => {
-    if (!controlsRef.current || !controlsRef.current.object) return;
-    const cam = controlsRef.current.object;
-    const d = targetCameraZ;
-
-    if (view === 'iso') {
-      cam.position.set(d * 0.72, d * 0.45, d * 0.72);
-      setCutawayMode('quarter');
-    } else if (view === 'front') {
-      cam.position.set(0, 0, d);
-    } else if (view === 'top') {
-      cam.position.set(0, d, 0.001);
-    } else if (view === 'core') {
-      cam.position.set(0, 0, d * 0.75);
-      setCutawayMode('core');
-    }
-
-    if (controlsRef.current.target) {
-      controlsRef.current.target.set(0, 0, 0);
-    }
-    controlsRef.current.update();
-  };
-
-  const zoomCamera = (factor: number) => {
-    if (!controlsRef.current || !controlsRef.current.object) return;
-    const cam = controlsRef.current.object;
-    cam.position.multiplyScalar(factor);
-    controlsRef.current.update();
-  };
 
   const resetCamera = () => {
     if (controlsRef.current) {
@@ -1293,38 +1248,108 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
             } overflow-hidden border flex flex-col justify-between select-none transition-all duration-200`
       }
     >
-      {/* 1. TOP CONTROL TOOLBAR: Render Modes, Perspectives & Action Tools */}
-      <div className="relative z-10 px-3 py-2 flex items-center justify-between gap-2 border-b border-[#332e27] bg-[#181613]/95 backdrop-blur-md flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Hydrodynamic Diameter Pill */}
+      {/* 1. TOP HEADER BAR: Title + Live Readout + Quick Actions */}
+      <div className="relative z-10 px-3 py-1.5 flex items-center justify-between border-b border-[#332e27] bg-[#181613]/95 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] font-semibold text-[#a69b8d] tracking-wide">Nanoparticle structural cutaway</span>
           <div
             style={{
               backgroundColor: tokens.colors.surfaceRaised,
               borderColor: tokens.colors.border,
               borderRadius: tokens.radius,
             }}
-            className="px-2.5 py-1 border font-mono text-[11px] text-[#e8dfd1] font-semibold flex items-center gap-1.5 shadow-xs"
+            className="px-2 py-0.5 border font-mono text-[10px] text-[#e8dfd1] font-semibold flex items-center gap-1.5"
           >
-            <span className="w-2 h-2 rounded-full bg-[#5e946c] animate-pulse" />
+            <span className="w-1.5 h-1.5 rounded-full bg-[#5e946c] animate-pulse" />
             <span>Dh: {biophysics.diameterNm} nm</span>
           </div>
-
-          {/* Cutaway Geometry Mode Segmented Pill */}
-          <div
+          <span className="text-[9px] font-mono text-[#70675c] hidden md:inline">
+            PDI {biophysics.pdi.toFixed(2)} · ζ {biophysics.zetaPotentialMv > 0 ? `+${biophysics.zetaPotentialMv}` : biophysics.zetaPotentialMv} mV
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {/* Orbit / Pause */}
+          <button
+            onClick={() => setAutoRotate(!autoRotate)}
             style={{
-              borderColor: tokens.colors.border,
+              backgroundColor: autoRotate ? tokens.colors.surfaceSelected : tokens.colors.surfaceRaised,
+              borderColor: autoRotate ? '#4d828f' : tokens.colors.border,
               borderRadius: tokens.radius,
             }}
+            className="px-2 py-0.5 text-[10px] text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer flex items-center gap-1"
+            title={autoRotate ? 'Pause 3D rotation' : 'Start smooth orbit rotation'}
+          >
+            {autoRotate ? <Pause className="w-2.5 h-2.5 text-[#e0ad5a]" /> : <Play className="w-2.5 h-2.5 text-[#5e946c]" />}
+            <span>{autoRotate ? 'Pause' : 'Orbit'}</span>
+          </button>
+          {/* Reset */}
+          <button
+            onClick={resetCamera}
+            style={{ backgroundColor: tokens.colors.surfaceRaised, borderColor: tokens.colors.border, borderRadius: tokens.radius }}
+            className="px-2 py-0.5 text-[10px] text-[#a69b8d] hover:text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer flex items-center gap-1"
+            title="Reset camera and viewport parameters"
+          >
+            <RotateCcw className="w-2.5 h-2.5" />
+          </button>
+          {/* PNG Snapshot */}
+          <button
+            onClick={handleExportPngSnapshot}
+            style={{
+              backgroundColor: snapshotSaved ? tokens.colors.status.successSubtle : tokens.colors.surfaceRaised,
+              borderColor: snapshotSaved ? tokens.colors.status.success : tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="px-2 py-0.5 text-[10px] text-[#e8dfd1] hover:bg-[#2a2621] border transition cursor-pointer flex items-center gap-1 font-medium"
+            title="Export high-resolution 1080p publication PNG of the 3D cutaway"
+          >
+            {snapshotSaved ? <Check className="w-3 h-3 text-[#5e946c]" /> : <Camera className="w-3 h-3 text-[#4d828f]" />}
+            <span>{snapshotSaved ? 'Saved!' : 'PNG'}</span>
+          </button>
+          {/* Viewport Size */}
+          <div className="flex items-center gap-0.5 border-l border-[#332e27] pl-1.5">
+            <button
+              onClick={() => setViewportSize((prev) => (prev === 'expanded' ? 'standard' : 'expanded'))}
+              style={{
+                backgroundColor: viewportSize === 'expanded' ? tokens.colors.surfaceSelected : tokens.colors.surfaceRaised,
+                borderColor: viewportSize === 'expanded' ? '#4d828f' : tokens.colors.border,
+                borderRadius: tokens.radius,
+              }}
+              className={`p-1 text-[10px] border transition cursor-pointer flex items-center ${viewportSize === 'expanded' ? 'text-[#e8dfd1]' : 'text-[#a69b8d] hover:text-[#e8dfd1] hover:bg-[#2a2621]'}`}
+              title={viewportSize === 'expanded' ? 'Standard height (640px)' : 'Expand height (780px)'}
+            >
+              {viewportSize === 'expanded' ? <Shrink className="w-3 h-3 text-[#4d828f]" /> : <Expand className="w-3 h-3" />}
+            </button>
+            <button
+              onClick={() => setViewportSize((prev) => (prev === 'fullscreen' ? 'standard' : 'fullscreen'))}
+              style={{
+                backgroundColor: viewportSize === 'fullscreen' ? tokens.colors.surfaceSelected : tokens.colors.surfaceRaised,
+                borderColor: viewportSize === 'fullscreen' ? '#5e946c' : tokens.colors.border,
+                borderRadius: tokens.radius,
+              }}
+              className={`p-1 text-[10px] border transition cursor-pointer flex items-center ${viewportSize === 'fullscreen' ? 'text-[#73a880] ring-1 ring-[#5e946c]/50' : 'text-[#a69b8d] hover:text-[#e8dfd1] hover:bg-[#2a2621]'}`}
+              title={viewportSize === 'fullscreen' ? 'Exit Fullscreen (Esc)' : 'Fullscreen Theater View'}
+            >
+              {viewportSize === 'fullscreen' ? <Minimize2 className="w-3 h-3 text-[#5e946c]" /> : <Maximize2 className="w-3 h-3" />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. CONTROL STRIP: Cutaway · Shader · View · pH — grouped with labeled sections */}
+      <div className="relative z-10 px-3 py-1.5 flex items-center gap-4 border-b border-[#24201b] bg-[#151310]/90 backdrop-blur-xs text-[10px] overflow-x-auto">
+        {/* ── CUTAWAY GROUP ── */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[#54493b] text-[8px] uppercase tracking-widest font-bold mr-0.5">Cut</span>
+          <div
+            style={{ borderColor: tokens.colors.border, borderRadius: tokens.radius }}
             className="flex items-center border overflow-hidden bg-[#181613] p-0.5"
           >
-            {(
-              [
-                { id: 'quarter', label: '90° Wedge', icon: Scissors },
-                { id: 'half', label: '180° Sagittal', icon: CircleDot },
-                { id: 'full', label: 'Surface', icon: Globe },
-                { id: 'core', label: 'Core', icon: Crosshair },
-              ] as const
-            ).map((mode) => {
+            {([
+              { id: 'quarter', label: '90°', icon: Scissors },
+              { id: 'half', label: '180°', icon: CircleDot },
+              { id: 'full', label: 'Surface', icon: Globe },
+              { id: 'core', label: 'Core', icon: Crosshair },
+            ] as const).map((mode) => {
               const IconComponent = mode.icon;
               const isActive = cutawayMode === mode.id;
               return (
@@ -1335,33 +1360,32 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
                     backgroundColor: isActive ? tokens.colors.surfaceSelected : 'transparent',
                     color: isActive ? tokens.colors.textPrimary : tokens.colors.textSecondary,
                   }}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-[2px] transition cursor-pointer flex items-center gap-1 ${
-                    isActive ? 'border border-[#4d828f]/60 font-semibold shadow-xs' : 'hover:text-[#e8dfd1]'
-                  }`}
+                  className={`px-1.5 py-0.5 text-[10px] font-medium rounded-[2px] transition cursor-pointer flex items-center gap-1 ${isActive ? 'border border-[#4d828f]/60 font-semibold shadow-xs' : 'hover:text-[#e8dfd1]'}`}
                   title={`Switch cutaway geometry: ${mode.label}`}
                 >
-                  <IconComponent className="w-3 h-3 text-[#4d828f]" />
+                  <IconComponent className="w-2.5 h-2.5 text-[#4d828f]" />
                   <span>{mode.label}</span>
                 </button>
               );
             })}
           </div>
+        </div>
 
-          {/* Optical Shader Mode Segmented Pill */}
+        {/* Divider */}
+        <div className="w-px h-4 bg-[#2b2620] shrink-0" />
+
+        {/* ── SHADER GROUP ── */}
+        <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+          <span className="text-[#54493b] text-[8px] uppercase tracking-widest font-bold mr-0.5">Shader</span>
           <div
-            style={{
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="hidden sm:flex items-center border overflow-hidden bg-[#181613] p-0.5"
+            style={{ borderColor: tokens.colors.border, borderRadius: tokens.radius }}
+            className="flex items-center border overflow-hidden bg-[#181613] p-0.5"
           >
-            {(
-              [
-                { id: 'pbr', label: 'PBR', icon: Sparkles },
-                { id: 'electrostatic', label: 'ζ-Charge', icon: Activity },
-                { id: 'cryo', label: 'Cryo-EM', icon: CircleDot },
-              ] as const
-            ).map((opt) => {
+            {([
+              { id: 'pbr', label: 'PBR', icon: Sparkles },
+              { id: 'electrostatic', label: 'ζ-Charge', icon: Activity },
+              { id: 'cryo', label: 'Cryo-EM', icon: CircleDot },
+            ] as const).map((opt) => {
               const IconComp = opt.icon;
               const isActive = opticalMode === opt.id;
               return (
@@ -1372,9 +1396,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
                     backgroundColor: isActive ? tokens.colors.surfaceSelected : 'transparent',
                     color: isActive ? tokens.colors.textPrimary : tokens.colors.textSecondary,
                   }}
-                  className={`px-2 py-0.5 text-[10px] font-medium rounded-[2px] transition cursor-pointer flex items-center gap-1 ${
-                    isActive ? 'border border-[#cfa052]/60 font-semibold shadow-xs' : 'hover:text-[#e8dfd1]'
-                  }`}
+                  className={`px-1.5 py-0.5 text-[10px] font-medium rounded-[2px] transition cursor-pointer flex items-center gap-1 ${isActive ? 'border border-[#cfa052]/60 font-semibold shadow-xs' : 'hover:text-[#e8dfd1]'}`}
                   title={`Switch rendering mode: ${opt.label}`}
                 >
                   <IconComp className="w-2.5 h-2.5 text-[#cfa052]" />
@@ -1383,254 +1405,42 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
               );
             })}
           </div>
-
-          {/* Camera View Angle Presets */}
-          <div className="hidden lg:flex items-center gap-1 border-l border-[#332e27] pl-2 text-[10px]">
-            <span className="text-[#70675c] text-[9px] uppercase tracking-wider font-semibold">View:</span>
-            <button
-              onClick={() => setCameraView('iso')}
-              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
-              title="Isometric 45° cutaway beauty perspective"
-            >
-              ISO 45°
-            </button>
-            <button
-              onClick={() => setCameraView('front')}
-              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
-              title="Front coronal view"
-            >
-              Front
-            </button>
-            <button
-              onClick={() => setCameraView('top')}
-              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
-              title="Polar top view"
-            >
-              Top
-            </button>
-            <button
-              onClick={() => setCameraView('core')}
-              className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] border border-[#332e27] transition cursor-pointer"
-              title="Zoom into inner ribonucleoprotein core"
-            >
-              Core
-            </button>
-          </div>
         </div>
 
-        {/* Right Action Stack: pH Titration Controller & Utilities */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Interactive Endosomal pH Controller with Milestone Chips */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surfaceRaised,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="flex items-center gap-1.5 px-2.5 py-1 border text-[10px] shadow-xs"
-            title="Titrate ambient pH to observe Henderson-Hasselbalch protonation and HII hexagonal phase fusion"
+        {/* Divider */}
+        <div className="hidden sm:block w-px h-4 bg-[#2b2620] shrink-0" />
+
+        {/* ── pH GROUP ── */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[#54493b] text-[8px] uppercase tracking-widest font-bold">pH</span>
+          <input
+            type="range"
+            min="5.0"
+            max="7.4"
+            step="0.1"
+            value={ambientPh}
+            onChange={(e) => setAmbientPh(parseFloat(e.target.value))}
+            style={{ accentColor: tokens.colors.accent }}
+            className="w-16 h-1 cursor-pointer"
+          />
+          <span
+            className={`font-mono font-bold text-[10px] px-1.5 py-0.5 rounded-[2px] ${
+              ambientPh <= 5.8
+                ? 'bg-[#5e946c]/20 text-[#73a880] border border-[#5e946c]/40'
+                : ambientPh <= 6.5
+                ? 'bg-[#c98a3b]/20 text-[#df9e51] border border-[#c98a3b]/40'
+                : 'bg-[#211e1a] text-[#e8dfd1] border border-[#332e27]'
+            }`}
           >
-            <span className="text-[#a69b8d] font-semibold">pH:</span>
-            <input
-              type="range"
-              min="5.0"
-              max="7.4"
-              step="0.1"
-              value={ambientPh}
-              onChange={(e) => setAmbientPh(parseFloat(e.target.value))}
-              style={{ accentColor: tokens.colors.accent }}
-              className="w-14 h-1 cursor-pointer"
-            />
-            <span
-              className={`font-mono font-bold px-1.5 py-0.2 rounded-[2px] ${
-                ambientPh <= 5.8
-                  ? 'bg-[#5e946c]/20 text-[#73a880] border border-[#5e946c]/40'
-                  : ambientPh <= 6.5
-                  ? 'bg-[#c98a3b]/20 text-[#df9e51] border border-[#c98a3b]/40'
-                  : 'bg-[#211e1a] text-[#e8dfd1] border border-[#332e27]'
-              }`}
-            >
-              {ambientPh.toFixed(1)}
-            </span>
-
-            {/* Quick-Jump Milestone Chips */}
-            <div className="hidden xl:flex items-center gap-1 border-l border-[#332e27] pl-1.5">
-              <button
-                onClick={() => setAmbientPh(7.4)}
-                className={`px-1 py-0.2 text-[9px] rounded-[2px] transition cursor-pointer ${
-                  ambientPh === 7.4 ? 'bg-[#528796] text-[#fff] font-bold' : 'text-[#70675c] hover:text-[#e8dfd1]'
-                }`}
-                title="Jump to Systemic Blood pH 7.4"
-              >
-                7.4
-              </button>
-              <button
-                onClick={() => setAmbientPh(6.2)}
-                className={`px-1 py-0.2 text-[9px] rounded-[2px] transition cursor-pointer ${
-                  ambientPh === 6.2 ? 'bg-[#c98a3b] text-[#fff] font-bold' : 'text-[#70675c] hover:text-[#e8dfd1]'
-                }`}
-                title="Jump to Early Endosome pH 6.2"
-              >
-                6.2
-              </button>
-              <button
-                onClick={() => setAmbientPh(5.5)}
-                className={`px-1 py-0.2 text-[9px] rounded-[2px] transition cursor-pointer ${
-                  ambientPh === 5.5 ? 'bg-[#5e946c] text-[#fff] font-bold' : 'text-[#70675c] hover:text-[#e8dfd1]'
-                }`}
-                title="Jump to Late Endosome pH 5.5 (HII Hexagonal Phase)"
-              >
-                5.5
-              </button>
-            </div>
-          </div>
-
-          {/* Action Buttons: Orbit, Reset & Publication Snapshot */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setAutoRotate(!autoRotate)}
-              style={{
-                backgroundColor: autoRotate ? tokens.colors.surfaceSelected : tokens.colors.surfaceRaised,
-                borderColor: autoRotate ? '#4d828f' : tokens.colors.border,
-                borderRadius: tokens.radius,
-              }}
-              className="px-2 py-1 text-[10px] text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer flex items-center gap-1"
-              title={autoRotate ? 'Pause 3D rotation' : 'Start smooth orbit rotation'}
-            >
-              {autoRotate ? (
-                <>
-                  <Pause className="w-2.5 h-2.5 text-[#e0ad5a]" />
-                  <span>Pause</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-2.5 h-2.5 text-[#5e946c]" />
-                  <span>Orbit</span>
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={resetCamera}
-              style={{
-                backgroundColor: tokens.colors.surfaceRaised,
-                borderColor: tokens.colors.border,
-                borderRadius: tokens.radius,
-              }}
-              className="px-2 py-1 text-[10px] text-[#a69b8d] hover:text-[#e8dfd1] border hover:bg-[#2a2621] transition cursor-pointer flex items-center gap-1"
-              title="Reset camera and viewport parameters"
-            >
-              <RotateCcw className="w-2.5 h-2.5" />
-              <span>Reset</span>
-            </button>
-
-            <button
-              onClick={handleExportPngSnapshot}
-              style={{
-                backgroundColor: snapshotSaved
-                  ? tokens.colors.status.successSubtle
-                  : tokens.colors.surfaceRaised,
-                borderColor: snapshotSaved ? tokens.colors.status.success : tokens.colors.border,
-                borderRadius: tokens.radius,
-              }}
-              className="px-2.5 py-1 text-[10px] text-[#e8dfd1] hover:bg-[#2a2621] border transition cursor-pointer flex items-center gap-1.5 shadow-xs font-medium"
-              title="Export high-resolution 1080p publication PNG of the 3D cutaway"
-            >
-              {snapshotSaved ? (
-                <Check className="w-3 h-3 text-[#5e946c]" />
-              ) : (
-                <Camera className="w-3 h-3 text-[#4d828f]" />
-              )}
-              <span>{snapshotSaved ? 'Saved!' : 'PNG'}</span>
-              <span className="text-[8px] font-mono text-[#70675c] px-1 bg-[#181613] rounded">1080p</span>
-            </button>
-
-            {/* Viewport Size Controls: Standard vs Expanded vs Fullscreen */}
-            <div className="flex items-center gap-1 border-l border-[#332e27] pl-1.5">
-              <button
-                onClick={() =>
-                  setViewportSize((prev) => (prev === 'expanded' ? 'standard' : 'expanded'))
-                }
-                style={{
-                  backgroundColor:
-                    viewportSize === 'expanded'
-                      ? tokens.colors.surfaceSelected
-                      : tokens.colors.surfaceRaised,
-                  borderColor:
-                    viewportSize === 'expanded' ? '#4d828f' : tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className={`px-2 py-1 text-[10px] border transition cursor-pointer flex items-center gap-1 ${
-                  viewportSize === 'expanded'
-                    ? 'text-[#e8dfd1] font-semibold'
-                    : 'text-[#a69b8d] hover:text-[#e8dfd1] hover:bg-[#2a2621]'
-                }`}
-                title={
-                  viewportSize === 'expanded'
-                    ? 'Switch to Standard viewing height (640px)'
-                    : 'Expand viewing area height (780px)'
-                }
-              >
-                {viewportSize === 'expanded' ? (
-                  <>
-                    <Shrink className="w-2.5 h-2.5 text-[#4d828f]" />
-                    <span>640px</span>
-                  </>
-                ) : (
-                  <>
-                    <Expand className="w-2.5 h-2.5 text-[#a69b8d]" />
-                    <span>Expand</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={() =>
-                  setViewportSize((prev) => (prev === 'fullscreen' ? 'standard' : 'fullscreen'))
-                }
-                style={{
-                  backgroundColor:
-                    viewportSize === 'fullscreen'
-                      ? tokens.colors.surfaceSelected
-                      : tokens.colors.surfaceRaised,
-                  borderColor:
-                    viewportSize === 'fullscreen' ? '#5e946c' : tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className={`px-2 py-1 text-[10px] border transition cursor-pointer flex items-center gap-1 ${
-                  viewportSize === 'fullscreen'
-                    ? 'text-[#73a880] font-semibold ring-1 ring-[#5e946c]/50'
-                    : 'text-[#a69b8d] hover:text-[#e8dfd1] hover:bg-[#2a2621]'
-                }`}
-                title={
-                  viewportSize === 'fullscreen'
-                    ? 'Exit Fullscreen (Esc)'
-                    : 'Enter Fullscreen Immersive Theater View'
-                }
-              >
-                {viewportSize === 'fullscreen' ? (
-                  <>
-                    <Minimize2 className="w-2.5 h-2.5 text-[#5e946c]" />
-                    <span>Exit</span>
-                  </>
-                ) : (
-                  <>
-                    <Maximize2 className="w-2.5 h-2.5" />
-                    <span>Full</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
+            {ambientPh.toFixed(1)}
+          </span>
         </div>
       </div>
 
-      {/* 2. INTERACTIVE LAYER MATRIX: Visibility Toggles + Solo/Pinning + Particle Counts */}
-      <div className="relative z-10 px-3 py-1.5 flex items-center justify-between text-[10px] text-[#a69b8d] border-b border-[#24201b] bg-[#151310]/90 backdrop-blur-xs flex-wrap gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[#70675c] font-semibold uppercase tracking-wider text-[9px]">
-            Layers:
-          </span>
+      {/* 3. LAYER BAR: Visibility Toggles + Solo/Pinning */}
+      <div className="relative z-10 px-3 py-1 flex items-center justify-between text-[10px] text-[#a69b8d] border-b border-[#24201b] bg-[#151310]/90 backdrop-blur-xs">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[#54493b] text-[8px] uppercase tracking-widest font-bold mr-1">Layers</span>
 
           {layerButtons.map((layer) => {
             const isVisible = visibility[layer.id];
@@ -1644,15 +1454,12 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
                   borderColor: isPinned ? layer.ringColor : isIsolated ? '#4d828f' : '#2b2620',
                   backgroundColor: isPinned ? `${layer.ringColor}18` : isIsolated ? '#26221c' : '#1c1a16',
                 }}
-                className={`flex items-center rounded-[3px] border overflow-hidden transition-all shadow-xs ${
-                  isPinned ? 'ring-1' : ''
-                }`}
-                style-ringcolor={layer.ringColor}
+                className={`flex items-center rounded-[3px] border overflow-hidden transition-all shadow-xs ${isPinned ? 'ring-1' : ''}`}
               >
                 {/* Visibility Eye Toggle */}
                 <button
                   onClick={() => toggleLayer(layer.id)}
-                  className={`px-1.5 py-1 hover:bg-[#2f2a23] transition cursor-pointer border-r border-[#2b2620] ${
+                  className={`px-1 py-0.5 hover:bg-[#2f2a23] transition cursor-pointer border-r border-[#2b2620] ${
                     isVisible ? 'text-[#a69b8d] hover:text-[#e8dfd1]' : 'text-[#54493b] hover:text-[#70675c]'
                   }`}
                   title={`${isVisible ? 'Hide' : 'Show'} ${layer.label}`}
@@ -1665,9 +1472,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
                   onClick={() => handleSelectMeshLayer(layer.id)}
                   onMouseEnter={() => setHoveredLayer(layer.id)}
                   onMouseLeave={() => setHoveredLayer(null)}
-                  className={`px-2 py-1 flex items-center gap-1.5 hover:bg-[#2f2a23] transition cursor-pointer ${
-                    !isVisible ? 'opacity-40 line-through' : ''
-                  }`}
+                  className={`px-1.5 py-0.5 flex items-center gap-1 hover:bg-[#2f2a23] transition cursor-pointer ${!isVisible ? 'opacity-40 line-through' : ''}`}
                   title={`Click to focus / pin ${layer.label} in 3D`}
                 >
                   <span
@@ -1677,32 +1482,31 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
                   <span className={`font-medium ${isPinned ? 'text-[#e8dfd1] font-semibold' : 'text-[#c7bcb0]'}`}>
                     {layer.label}
                   </span>
-                  <span className="text-[9px] font-mono text-[#70675c] bg-[#12110f]/70 px-1 py-0.2 rounded">
+                  <span className="text-[8px] font-mono text-[#70675c] bg-[#12110f]/70 px-0.5 rounded">
                     {layer.sublabel}
                   </span>
                 </button>
               </div>
             );
           })}
-        </div>
 
-        {/* Pinned Layer State & Real-time Telemetry Pill */}
-        <div className="flex items-center gap-2 text-[10px] font-mono text-[#70675c]">
+          {/* Pinned badge inline */}
           {pinnedLayer !== 'all' && (
             <button
               onClick={() => setPinnedLayer('all')}
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded-[2px] bg-[#4d828f]/20 border border-[#4d828f]/60 text-[#98c2cc] hover:text-[#e8dfd1] hover:bg-[#4d828f]/30 cursor-pointer font-sans text-[10px] font-semibold transition"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-[2px] bg-[#4d828f]/20 border border-[#4d828f]/60 text-[#98c2cc] hover:text-[#e8dfd1] hover:bg-[#4d828f]/30 cursor-pointer font-sans text-[9px] font-semibold transition ml-1"
               title="Click to unlock and show all layers together"
             >
               <Lock className="w-2.5 h-2.5" />
               <span>PINNED: {pinnedLayer.toUpperCase()}</span>
-              <span className="text-[9px] text-[#e27b6c] ml-0.5 font-bold">✕ Unlock</span>
+              <span className="text-[#e27b6c] font-bold">✕</span>
             </button>
           )}
-          <span className="hidden md:inline font-mono">
-            CPP: <strong className="text-[#e8dfd1]">{advancedMetrics.cpp}</strong> • RF/D:{' '}
-            <strong className="text-[#e8dfd1]">{advancedMetrics.deGennesRatio}</strong>
-          </span>
+        </div>
+
+        {/* N/P Ratio Badge */}
+        <div className="text-[9px] font-mono text-[#70675c] shrink-0">
+          N/P = <strong className="text-[#e8dfd1]">{formulation.npRatio.toFixed(1)}:1</strong>
         </div>
       </div>
 
@@ -1744,41 +1548,6 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
           <OrbitControls ref={controlsRef} enableZoom={true} autoRotate={false} enableDamping dampingFactor={0.05} />
         </Canvas>
 
-        {/* Floating In-Canvas Viewport Controls (Top-Left) */}
-        <div className="absolute top-2.5 left-2.5 flex flex-col gap-1 z-10">
-          <div className="flex items-center gap-1 p-1 rounded-[3px] bg-[#12110f]/85 border border-[#332e27] backdrop-blur-xs shadow-md">
-            <button
-              onClick={() => zoomCamera(0.85)}
-              className="p-1 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] transition cursor-pointer"
-              title="Zoom In"
-            >
-              <Plus className="w-3 h-3" />
-            </button>
-            <button
-              onClick={() => zoomCamera(1.18)}
-              className="p-1 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] transition cursor-pointer"
-              title="Zoom Out"
-            >
-              <Minus className="w-3 h-3" />
-            </button>
-            <button
-              onClick={resetCamera}
-              className="p-1 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] text-[#a69b8d] hover:text-[#e8dfd1] transition cursor-pointer"
-              title="Reset View"
-            >
-              <RotateCcw className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-
-        {/* Floating Layer Quick Telemetry Badge (Top-Right) */}
-        {inspectedLayer !== 'all' && (
-          <div className="absolute top-2.5 right-2.5 pointer-events-none flex items-center gap-1.5 px-2.5 py-1 rounded-[3px] bg-[#12110f]/90 border border-[#4d828f]/60 text-[10px] font-mono text-[#98c2cc] backdrop-blur-xs shadow-lg">
-            <Sparkles className="w-3 h-3 text-[#5e946c]" />
-            <span>{hud.badge}</span>
-          </div>
-        )}
-
         {/* Calibrated Cryo-TEM Physical Scale Bar (Bottom-Left) */}
         <div className="absolute bottom-2.5 left-2.5 pointer-events-none flex flex-col gap-0.5 text-[9px] font-mono text-[#a69b8d] bg-[#12110f]/80 px-2 py-1 rounded-[2px] border border-[#2b2620] backdrop-blur-xs">
           <div className="flex items-center gap-1.5">
@@ -1796,34 +1565,11 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
           </span>
         </div>
 
-        {/* Live Endosomal Compartment Badge (Bottom-Right) */}
-        <div className="absolute bottom-2.5 right-2.5 pointer-events-none text-[9px] font-mono px-2.5 py-1 rounded-[2px] border border-[#332e27] bg-[#181613]/90 text-[#a69b8d] flex items-center gap-1.5 backdrop-blur-xs shadow-md">
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              ambientPh >= 7.1 ? 'bg-[#528796]' : ambientPh >= 6.0 ? 'bg-[#c98a3b]' : 'bg-[#5e946c] animate-pulse'
-            }`}
-          />
-          {ambientPh >= 7.1
-            ? 'Systemic Blood (pH 7.4)'
-            : ambientPh >= 6.0
-            ? 'Early Endosome (Acidifying)'
-            : 'Late Endosome (HII Membrane Disruption)'}
-        </div>
       </div>
 
       {/* 4. BOTTOM CONTEXTUAL BIOPHYSICAL HUD INSPECTOR */}
-      <div className="relative z-10 px-3 py-2 border-t border-[#332e27] bg-[#181613]/95 flex items-center justify-between text-[11px] flex-wrap gap-2">
-        <div className="flex flex-col gap-0.5 leading-tight">
-          <div className="font-medium text-[#e8dfd1] flex items-center gap-2">
-            <span>{hud.title}</span>
-          </div>
-          <span className="text-[10px] text-[#a69b8d]">{hud.detail}</span>
-        </div>
-        <div className="text-right text-[10px] font-mono text-[#70675c] shrink-0 ml-auto">
-          Zeta: <strong className="text-[#e8dfd1]">{biophysics.zetaPotentialMv > 0 ? `+${biophysics.zetaPotentialMv}` : biophysics.zetaPotentialMv} mV</strong> • PDI:{' '}
-          <strong className="text-[#e8dfd1]">{biophysics.pdi.toFixed(2)}</strong> • Tropism:{' '}
-          <strong className="text-[#e8dfd1]">{biophysics.organTropism.liver}% Liver</strong>
-        </div>
+      <div className="relative z-10 px-3 py-1.5 border-t border-[#332e27] bg-[#181613]/95 text-[10px] text-[#a69b8d] truncate">
+        <span className="font-medium text-[#e8dfd1]">{hud.title}</span>
       </div>
     </div>
   );

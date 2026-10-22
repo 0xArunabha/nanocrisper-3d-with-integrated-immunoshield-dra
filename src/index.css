@@ -106,3 +106,342 @@ input[type="range"]::-moz-range-thumb {
 ::-webkit-scrollbar-thumb:hover {
   background: #332e27;
 }
+
+/* Regulatory & Publication Dossier Typography */
+.font-serif-dossier {
+  font-family: "Newsreader", Georgia, "Times New Roman", serif;
+}
+
+.font-sans-dossier {
+  font-family: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.font-mono-dossier {
+  font-family: "IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+/* ==========================================================================
+   PRINT / PDF STYLESHEET FOR PRE-IND REGULATORY DOSSIER
+   ========================================================================== */
+
+/* Deterministic US Letter Page Box & Running Margin Directives */
+@page {
+  size: letter portrait;
+  margin: 14mm 12mm 14mm 12mm;
+
+  @top-left {
+    content: "PRE-IND REGULATORY TECHNICAL DOSSIER | HBB LOCUS";
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 7.5pt;
+    font-weight: 600;
+    color: #334155;
+    letter-spacing: 0.04em;
+  }
+
+  @top-right {
+    /* Dynamic Institutional Watermark injected by nanocrisper-dynamic-print-watermark */
+    content: "";
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 7.5pt;
+    font-weight: 600;
+    color: #334155;
+  }
+
+  @bottom-left {
+    content: "CONFIDENTIAL — ICH M4Q / FDA eCTD MODULE 3 CMC";
+    font-family: "Inter", "Helvetica Neue", Arial, sans-serif;
+    font-size: 7pt;
+    color: #64748b;
+  }
+
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 7.5pt;
+    font-weight: 600;
+    color: #0f172a;
+  }
+}
+
+@media print {
+  /* Force solid paper theme regardless of active dark/paper modal toggle */
+  html, body, .dossier-print-root {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    font-size: 9.5pt;
+    line-height: 1.45;
+  }
+
+  /* Hide interactive UI controls, theme toggles, modal chrome, and background workbench */
+  main,
+  #root > div > main,
+  #root > div > header,
+  header,
+  footer,
+  aside,
+  button,
+  canvas,
+  input,
+  select,
+  .no-print,
+  .dossier-modal-toolbar,
+  .theme-toggle-btn,
+  .export-action-bar,
+  #app-header,
+  #app-tabs,
+  #viewport-canvas,
+  .clinical-tour-container {
+    display: none !important;
+  }
+
+  /* Unroll modal wrapper for print */
+  .fixed.inset-0,
+  .dossier-print-root {
+    position: static !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    max-height: none !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .max-w-5xl {
+    max-width: 100% !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    max-height: none !important;
+    background: transparent !important;
+  }
+
+  #printable-dossier,
+  .dossier-document {
+    display: block !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    font-size: 9.5pt !important;
+    line-height: 1.45 !important;
+  }
+
+  /* Module & Table Pagination Guards */
+  .ich-module-section {
+    break-before: auto;
+    page-break-before: auto;
+    margin-bottom: 20px;
+  }
+
+  .ich-module-section-break {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .cmc-subsection-block {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 8px;
+  }
+
+  h1, h2, h3, h4, .section-header-block {
+    break-after: avoid-page;
+    page-break-after: avoid;
+    orphans: 3;
+    widows: 3;
+  }
+
+  table.cmc-data-table {
+    width: 100%;
+    border-collapse: collapse;
+    break-inside: auto;
+    font-variant-numeric: tabular-nums;
+  }
+
+  table.cmc-data-table thead {
+    display: table-header-group;
+  }
+
+  table.cmc-data-table tr,
+  .biophysical-card,
+  .thermodynamic-plot-container,
+  .cmc-figure-container {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  table.cmc-data-table th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    padding: 4px 6px;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  table.cmc-data-table td {
+    border: 1px solid #e2e8f0 !important;
+    padding: 3.5px 6px;
+    font-size: 8.5pt;
+    color: #1e293b !important;
+  }
+
+  /* Subscript and superscript math baseline stability in PDF print */
+  sub, sup, .cmc-sub, .cmc-sup {
+    font-size: 0.72em !important;
+    line-height: 0 !important;
+    position: relative !important;
+    vertical-align: baseline !important;
+  }
+  sub, .cmc-sub {
+    bottom: -0.22em !important;
+  }
+  sup, .cmc-sup {
+    top: -0.45em !important;
+  }
+
+  .cmc-equation-card {
+    background: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 2px !important;
+    padding: 5px 10px !important;
+    font-family: "IBM Plex Mono", Menlo, Consolas, monospace !important;
+    font-size: 8.5pt !important;
+    line-height: 1.45 !important;
+    text-align: center !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin: 6px 0;
+  }
+
+  /* Metric tile labels */
+  .dossier-metric-label {
+    font-size: 7.5pt !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b !important;
+  }
+
+  .dossier-metric-value {
+    font-size: 11pt !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+  }
+
+  tbody tr:nth-child(even) {
+    background-color: #f8fafc !important;
+  }
+
+  .dossier-callout {
+    background-color: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+    border-left: 3.5pt solid #0f766e !important;
+  }
+
+  code, pre {
+    font-family: "IBM Plex Mono", Menlo, Consolas, monospace !important;
+    font-size: 8.5pt !important;
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+    border: 1px solid #e2e8f0 !important;
+    padding: 1pt 3pt !important;
+    border-radius: 2px;
+  }
+}
+
+/* ==========================================================================
+   FORMAL REGULATORY DOSSIER STYLES (ICH M4Q / FDA SPECIFICATION)
+   No holographic, glowing, scanline, or watermark effects.
+   ========================================================================== */
+
+/* Clean flat document sheet for Paper View mode */
+.dossier-paper-page {
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border: 1px solid #cbd5e1;
+}
+
+/* Formal Table of Contents for dossier */
+.dossier-toc {
+  font-family: "Plus Jakarta Sans", sans-serif;
+}
+
+.dossier-toc-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 0;
+  border-bottom: 1px dotted #2e2923;
+  font-size: 10px;
+}
+
+.dossier-paper-page .dossier-toc-entry {
+  border-bottom: 1px dotted #cbd5e1;
+}
+
+.dossier-toc-entry:last-child {
+  border-bottom: none;
+}
+
+.dossier-toc-num {
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 700;
+  color: #0f766e;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.dossier-paper-page .dossier-toc-num {
+  color: #0f766e;
+}
+
+.dossier-toc-title {
+  flex: 1;
+  color: #a69b8d;
+}
+
+.dossier-paper-page .dossier-toc-title {
+  color: #1e293b;
+}
+
+.dossier-toc-dots {
+  flex: 1;
+  border-bottom: 1px dotted #332e27;
+  min-width: 40px;
+  margin: 0 4px;
+  height: 0;
+  align-self: center;
+}
+
+.dossier-paper-page .dossier-toc-dots {
+  border-bottom: 1px dotted #94a3b8;
+}
+
+/* Formal Executive Summary callout — flat, architectural, non-holographic */
+.dossier-exec-summary {
+  padding: 14px 18px;
+  border-radius: 2px;
+}
+
+.dossier-paper-page .dossier-exec-summary {
+  background: #f8fafc !important;
+  color: #0f172a !important;
+  border: 1px solid #e2e8f0 !important;
+  border-left: 4px solid #0f766e !important;
+}
+
+.dossier-document:not(.dossier-paper-page) .dossier-exec-summary {
+  background: #151310 !important;
+  color: #e8dfd1 !important;
+  border: 1px solid #24201b !important;
+  border-left: 4px solid #0f766e !important;
+}

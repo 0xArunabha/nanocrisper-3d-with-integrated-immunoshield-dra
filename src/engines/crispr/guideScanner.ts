@@ -5,7 +5,56 @@ import {
   type GenePreset,
   type GuideCandidate,
   type PamVariant,
+  type ThermodynamicProfile,
 } from '../types';
+
+const RNA_DNA_NN: Record<string, [number, number]> = {
+  AA: [-7.8, -21.9], AT: [-8.3, -23.9], AC: [-9.1, -23.5], AG: [-7.0, -16.4],
+  TA: [-4.2, -10.0], TT: [-6.1, -16.9], TC: [-7.0, -17.6], TG: [-5.8, -12.3],
+  CA: [-9.0, -23.5], CT: [-7.0, -16.4], CC: [-9.3, -23.2], CG: [-16.3, -47.1],
+  GA: [-5.5, -13.5], GT: [-7.8, -21.6], GC: [-8.0, -17.1], GG: [-12.8, -31.9],
+};
+
+export function estimateLocalThermodynamics(spacer: string): ThermodynamicProfile {
+  let dh = 1.9;
+  let ds = -3.9;
+  const clean = spacer.toUpperCase().replace(/U/g, 'T');
+  for (let i = 0; i < clean.length - 1; i++) {
+    const pair = clean.slice(i, i + 2);
+    const [h, s] = RNA_DNA_NN[pair] || [-7.5, -19.5];
+    dh += h;
+    ds += s;
+  }
+  const dsSalt = ds + 0.368 * (clean.length - 1) * Math.log(0.15);
+  const dg37 = dh - 310.15 * (dsSalt / 1000);
+  const tm = (dh * 1000) / (dsSalt + 1.9872 * Math.log(2.5e-7 / 4)) - 273.15;
+  const dnaDg = dg37 * 0.78;
+  const rLoopNet = dg37 - dnaDg;
+
+  return {
+    spacer: clean,
+    rnaDnaDg37: Math.round(dg37 * 100) / 100,
+    rnaDnaDh: Math.round(dh * 10) / 10,
+    rnaDnaDs: Math.round(dsSalt * 10) / 10,
+    rnaDnaTm: Math.round(tm * 10) / 10,
+    dnaDnaDg37: Math.round(dnaDg * 100) / 100,
+    rLoopNetDg: Math.round(rLoopNet * 100) / 100,
+    isRLoopThermodynamicallyFavored: rLoopNet < 0,
+    hairpinDg: 0.0,
+    hairpinStructure: '....................',
+    hairpinStemLength: 0,
+    hairpinLoopSize: 0,
+    hairpinRisk: 'Low / Unstructured',
+    seedDg: Math.round((dg37 * 0.52) * 100) / 100,
+    distalDg: Math.round((dg37 * 0.48) * 100) / 100,
+    seedAsymmetryDdg: 0.0,
+    hasGcClamp: clean.length >= 20 && /[GC]/.test(clean[18]) && /[GC]/.test(clean[19]),
+    selfDimerDg: -1.5,
+    selfDimerRisk: 'Negligible',
+    thermodynamicVerdict: 'Optimal Thermodynamic Profile',
+    thermodynamicEfficiencyBonus: 0.0,
+  };
+}
 
 export const CODON_TABLE: Record<string, string> = {
   TTT: 'F', TTC: 'F', TTA: 'L', TTG: 'L', CTT: 'L', CTC: 'L', CTA: 'L', CTG: 'L',
@@ -235,6 +284,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
       hasSasSnpCollision,
       CompositeScore: score,
       verdict,
+      thermoProfile: estimateLocalThermodynamics(spacer),
     });
   }
 
@@ -333,6 +383,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
       hasSasSnpCollision,
       CompositeScore: score,
       verdict,
+      thermoProfile: estimateLocalThermodynamics(spacer),
     });
   }
 

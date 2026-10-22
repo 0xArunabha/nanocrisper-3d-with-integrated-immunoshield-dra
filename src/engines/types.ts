@@ -1,6 +1,8 @@
 // src/engines/types.ts
 // Domain Types and Contracts for NanoCRISPER-3D
 
+export type DashboardTab = 'overview' | 'crispr' | 'lnp' | 'immunology' | 'batch';
+
 /**
  * Base-editor options modeled by the local guide scanner. These labels are
  * intentionally human-readable because they are also shown in the workbench
@@ -94,6 +96,79 @@ export interface BystanderEdit {
   originalAA: string;
   editedAA: string;
   classification: 'Target Edit' | 'Silent (Synonymous)' | 'Missense (Pathogenic Risk)' | 'Nonsense (Premature Stop)';
+  riskLevel?: string;
+  clinvarTag?: string;
+  granthamDistance?: number;
+  biochemicalImpact?: string;
+}
+
+export interface VariantAnnotation {
+  variantId: string;
+  name?: string;
+  mostSevereConsequence?: string;
+  clinicalSignificance?: string[];
+  sasFrequency?: number;
+  minorAllele?: string;
+  ancestralAllele?: string;
+  _source?: string;
+}
+
+export interface ExternalGeneMetadata extends GenePreset {
+  fullCdsLength?: number;
+  ensemblGeneId?: string;
+  canonicalTranscriptId?: string;
+  chromosome?: string;
+  _source?: string;
+  error?: string;
+}
+
+export interface ThermodynamicProfile {
+  spacer: string;
+  rnaDnaDg37: number;
+  rnaDnaDh: number;
+  rnaDnaDs: number;
+  rnaDnaTm: number;
+  dnaDnaDg37: number;
+  rLoopNetDg: number;
+  isRLoopThermodynamicallyFavored: boolean;
+  hairpinDg: number;
+  hairpinStructure: string;
+  hairpinStemLength: number;
+  hairpinLoopSize: number;
+  hairpinRisk: 'Low / Unstructured' | 'Moderate Hairpin' | 'Severe Hairpin Lock';
+  seedDg: number;
+  distalDg: number;
+  seedAsymmetryDdg: number;
+  hasGcClamp: boolean;
+  selfDimerDg: number;
+  selfDimerRisk: 'Negligible' | 'Mild Dimer' | 'Inhibitory Homodimer';
+  thermodynamicVerdict:
+    | 'Optimal Thermodynamic Profile'
+    | 'Hairpin Prone (Steric Barrier)'
+    | 'Weak R-Loop Driving Force'
+    | 'Excessive Seed Binding (Off-Target Risk)';
+  thermodynamicEfficiencyBonus: number;
+}
+
+export interface SecondaryStructureResult {
+  sequence: string;
+  rnaSequence: string;
+  mfe: number;
+  dotBracket: string;
+  basePairs: number[][];
+  stemLength: number;
+  loopSize: number;
+  hairpinRisk: 'Low / Unstructured' | 'Moderate Hairpin' | 'Severe Hairpin Lock';
+  biophysicalInterpretation: string;
+}
+
+export interface HomodimerResult {
+  sequence: string;
+  dimerDg: number;
+  dimerStructureTop: string;
+  dimerStructureBottom: string;
+  dimerRisk: 'Negligible' | 'Mild Dimer' | 'Inhibitory Homodimer';
+  biophysicalInterpretation: string;
 }
 
 export interface GuideCandidate {
@@ -108,6 +183,7 @@ export interface GuideCandidate {
   hasSasSnpCollision: boolean;
   CompositeScore: number;
   verdict: 'Optimal Clinical Guide' | 'Safe (Silent Bystander)' | 'High Risk (Bystander/SNP)' | 'Low Efficiency';
+  thermoProfile?: ThermodynamicProfile;
 }
 
 export interface CloningOligos {

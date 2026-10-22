@@ -8,6 +8,7 @@ export * from './service';
 // CRISPR & Genetics
 export * from './crispr/guideScanner';
 export * from './crispr/oligoGenerator';
+export * from './crispr/orderSheetGenerator';
 
 // Nanotechnology & CMC
 export * from './nanotech/lnpSimulator';

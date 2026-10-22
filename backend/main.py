@@ -9,8 +9,46 @@ from __future__ import annotations
 import math
 from typing import Literal
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+try:
+    from backend.thermodynamics import (
+        ThermodynamicProfile,
+        SecondaryStructureResult,
+        HomodimerResult,
+        compute_full_thermodynamic_profile,
+        predict_rna_secondary_structure,
+        predict_homodimer_stability,
+    )
+    from backend.integrations import (
+        lookup_ensembl_gene,
+        lookup_variant_details,
+        annotate_bystander_pathogenicity,
+        score_peptide_hla_binding,
+        scan_protein_for_epitopes,
+        calculate_melting_temp,
+        biopython_translate,
+    )
+except ImportError:
+    from thermodynamics import (
+        ThermodynamicProfile,
+        SecondaryStructureResult,
+        HomodimerResult,
+        compute_full_thermodynamic_profile,
+        predict_rna_secondary_structure,
+        predict_homodimer_stability,
+    )
+    from integrations import (
+        lookup_ensembl_gene,
+        lookup_variant_details,
+        annotate_bystander_pathogenicity,
+        score_peptide_hla_binding,
+        scan_protein_for_epitopes,
+        calculate_melting_temp,
+        biopython_translate,
+    )
 
 app = FastAPI(
     title="NanoCRISPR-3D Bio-Engine API",
@@ -82,6 +120,7 @@ class GuideCandidate(BaseModel):
         "High Risk (Bystander/SNP)",
         "Low Efficiency",
     ]
+    thermoProfile: ThermodynamicProfile | None = None
 
 
 class LnpFormulation(BaseModel):
@@ -163,6 +202,35 @@ class HlaAssessmentRequest(BaseModel):
 class HlaAssessmentResult(BaseModel):
     patientRelevantEpitopes: list[EpitopeHotspot]
     residualRiskScore: int
+
+
+class ThermodynamicRequest(BaseModel):
+    spacer: str
+
+
+class SecondaryStructureRequest(BaseModel):
+    sequence: str
+
+
+class HomodimerRequest(BaseModel):
+    spacer: str
+
+
+class BystanderAnnotationRequest(BaseModel):
+    geneSymbol: str
+    bystanders: list[BystanderEdit]
+
+
+class EpitopeScanRequest(BaseModel):
+    sequence: str
+    allele: str
+    minScore: int = 70
+
+
+class EpitopeScoreRequest(BaseModel):
+    peptide: str
+    allele: str
+
 
 
 # ============================================================================
@@ -315,18 +383,22 @@ def score_candidate_thermodynamic(
     target_pos_weight: float,
     edits: list[BystanderEdit],
     has_sas_snp: bool,
+    thermo: ThermodynamicProfile | None = None,
 ) -> tuple[int, Literal["Optimal Clinical Guide", "Safe (Silent Bystander)", "High Risk (Bystander/SNP)", "Low Efficiency"]]:
     score = 65.0 if has_preferred_pam else 48.0
 
-    # 1. Nearest-Neighbor RNA:DNA Hybridization Free Energy Bonus
-    # Optimal R-loop invasion occurs around dG_37 in [-34.0, -24.0] kcal/mol
-    dg37 = calc_rna_dna_dg37(spacer)
-    if -34.5 <= dg37 <= -24.0 and 40 <= gc_content <= 60:
-        score += 16.0
-    elif 35 <= gc_content <= 65:
-        score += 9.0
+    if thermo is not None:
+        # Deep thermodynamic nearest-neighbor, secondary structure, and R-loop energy modifiers
+        score += thermo.thermodynamicEfficiencyBonus
     else:
-        score -= 10.0
+        # Fallback to basic nearest-neighbor
+        dg37 = calc_rna_dna_dg37(spacer)
+        if -34.5 <= dg37 <= -24.0 and 40 <= gc_content <= 60:
+            score += 16.0
+        elif 35 <= gc_content <= 65:
+            score += 9.0
+        else:
+            score -= 10.0
 
     # 2. Seed Region (positions 13-20 proximal to PAM) G/C nucleation stability
     seed_gc = sum(1 for b in spacer[12:20] if b in ("G", "C"))
@@ -370,9 +442,11 @@ def score_candidate_thermodynamic(
         "Low Efficiency",
     ] = "Low Efficiency"
 
-    if target_in_window and not has_harmful_bystander and not has_sas_snp and not has_pol_iii_stop:
+    has_severe_hairpin = thermo is not None and thermo.hairpinRisk == "Severe Hairpin Lock"
+
+    if target_in_window and not has_harmful_bystander and not has_sas_snp and not has_pol_iii_stop and not has_severe_hairpin:
         verdict = "Safe (Silent Bystander)" if has_silent_bystander else "Optimal Clinical Guide"
-    elif has_harmful_bystander or has_sas_snp:
+    elif has_harmful_bystander or has_sas_snp or has_severe_hairpin:
         verdict = "High Risk (Bystander/SNP)"
 
     return final_score, verdict
@@ -389,7 +463,10 @@ def health_check():
         "status": "online",
         "engine": "NanoCRISPR-3D Python FastAPI Bio-Engine",
         "modules": [
-            "RNA:DNA Sugimoto Nearest-Neighbor Thermodynamics",
+            "Sugimoto (1995) RNA:DNA Nearest-Neighbor Thermodynamics (dH, dS, dG37, Tm)",
+            "SantaLucia (1998) Unified Target DNA Duplex & Net R-Loop Driving Energy",
+            "Turner (2004) RNA Secondary Structure Dynamic Programming (Zuker MFE & Dot-Bracket)",
+            "Spacer-Spacer Homodimerization & PAM-Proximal Seed Asymmetry Engine",
             "ABE8e/BE4max Empirical Positional Activity",
             "Israelachvili CPP & De Gennes LNP Biophysics",
             "ImmunoShield South Asian MHC-I Panel",
@@ -472,6 +549,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
                 )
 
         has_sas_snp = i <= preset.sasSnpIndex <= (i + 22)
+        thermo = compute_full_thermodynamic_profile(spacer)
         score, verdict = score_candidate_thermodynamic(
             spacer,
             pam_classification == "preferred",
@@ -480,6 +558,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
             target_pos_weight,
             edits,
             has_sas_snp,
+            thermo=thermo,
         )
 
         candidates.append(
@@ -495,6 +574,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
                 hasSasSnpCollision=has_sas_snp,
                 CompositeScore=score,
                 verdict=verdict,
+                thermoProfile=thermo,
             )
         )
 
@@ -560,6 +640,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
                 )
 
         has_sas_snp = (i - 3) <= preset.sasSnpIndex <= (i + 19)
+        thermo = compute_full_thermodynamic_profile(spacer)
         score, verdict = score_candidate_thermodynamic(
             spacer,
             pam_classification == "preferred",
@@ -568,6 +649,7 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
             target_pos_weight,
             edits,
             has_sas_snp,
+            thermo=thermo,
         )
 
         candidates.append(
@@ -583,11 +665,38 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
                 hasSasSnpCollision=has_sas_snp,
                 CompositeScore=score,
                 verdict=verdict,
+                thermoProfile=thermo,
             )
         )
 
     candidates.sort(key=lambda c: c.CompositeScore, reverse=True)
     return candidates[:10]
+
+
+@app.post("/api/v1/crispr/thermodynamics", response_model=ThermodynamicProfile)
+def get_thermodynamics(req: ThermodynamicRequest) -> ThermodynamicProfile:
+    """
+    Computes Sugimoto (1995) RNA:DNA heteroduplex, SantaLucia (1998) target DNA duplex unwinding,
+    net R-loop driving energy (dG_net), Turner (2004) hairpin MFE, and seed asymmetry.
+    """
+    return compute_full_thermodynamic_profile(req.spacer)
+
+
+@app.post("/api/v1/crispr/secondary-structure", response_model=SecondaryStructureResult)
+def get_secondary_structure(req: SecondaryStructureRequest) -> SecondaryStructureResult:
+    """
+    Computes Turner (2004) nearest-neighbor dynamic programming minimum free energy (MFE)
+    secondary structure prediction with dot-bracket notation and hairpin loop descriptors.
+    """
+    return predict_rna_secondary_structure(req.sequence)
+
+
+@app.post("/api/v1/crispr/homodimer", response_model=HomodimerResult)
+def get_homodimer(req: HomodimerRequest) -> HomodimerResult:
+    """
+    Predicts spacer-spacer antiparallel self-dimerization hybridization stability (dG).
+    """
+    return predict_homodimer_stability(req.spacer)
 
 
 @app.post("/api/v1/nanotech/simulate", response_model=LnpBiophysicsResult)
@@ -816,4 +925,90 @@ def assess_hla(req: HlaAssessmentRequest) -> HlaAssessmentResult:
     relevant = filter_epitopes_by_hla_alleles(req.selectedAlleles, CAS9_EPITOPE_HOTSPOTS)
     risk = calculate_hla_risk_score(relevant, req.activeStealthMutations)
     return HlaAssessmentResult(patientRelevantEpitopes=relevant, residualRiskScore=risk)
+
+
+@app.get("/api/v1/dossier/pdf")
+def get_preind_dossier_pdf():
+    """Generates and streams the publication-grade Pre-IND Regulatory Dossier PDF."""
+    try:
+        from scripts.generate_dossier_pdf import generate_pdf, DEFAULT_PDF_PATH
+        pdf_path = generate_pdf()
+    except Exception:
+        from pathlib import Path
+        pdf_path = Path(__file__).resolve().parent.parent / "exports" / "Pre_IND_Regulatory_Technical_Dossier_HBB_MAKAUT.pdf"
+        if not pdf_path.exists():
+            raise
+    return FileResponse(
+        str(pdf_path),
+        media_type="application/pdf",
+        filename="Pre_IND_Regulatory_Technical_Dossier_HBB_MAKAUT.pdf",
+    )
+
+
+# ============================================================================
+# 8. EXTERNAL BIOINFORMATICS & CLINICAL ENRICHMENT APIS (TIER 2)
+# ============================================================================
+
+
+@app.get("/api/v1/external/gene/{symbol}")
+async def get_external_gene(symbol: str):
+    """
+    Dynamically fetches human gene metadata, canonical transcript ID,
+    and coding sequence (CDS) from Ensembl REST API (GRCh38) with SQLite caching.
+    """
+    return await lookup_ensembl_gene(symbol)
+
+
+@app.get("/api/v1/external/variant/{rsid}")
+async def get_external_variant(rsid: str):
+    """
+    Fetches variant clinical significance, consequence, and 1000 Genomes
+    South Asian (SAS) population allele frequencies from Ensembl / dbSNP.
+    """
+    return await lookup_variant_details(rsid)
+
+
+@app.post("/api/v1/external/clinvar/annotate")
+def annotate_bystanders(req: BystanderAnnotationRequest):
+    """
+    Annotates bystander missense mutations with clinical pathogenicity,
+    ClinVar risk classifications, and Grantham amino acid distance scores.
+    """
+    annotated = []
+    for b in req.bystanders:
+        clin = annotate_bystander_pathogenicity(
+            gene_symbol=req.geneSymbol,
+            original_aa=b.originalAA,
+            edited_aa=b.editedAA,
+            classification=b.classification,
+        )
+        item = b.model_dump()
+        item.update(clin)
+        annotated.append(item)
+    return annotated
+
+
+@app.post("/api/v1/external/immunology/predict")
+def predict_protein_epitopes(req: EpitopeScanRequest):
+    """
+    Scans a Cas protein or base editor sequence for South Asian HLA Class I
+    immunogenic epitope hotspots using canonical anchor pocket matrices.
+    """
+    return scan_protein_for_epitopes(
+        sequence=req.sequence,
+        allele=req.allele,
+        min_score=req.minScore,
+    )
+
+
+@app.post("/api/v1/external/immunology/score-peptide")
+def score_peptide_epitope(req: EpitopeScoreRequest):
+    """
+    Computes MHC-I binding affinity and IC50 for an individual 9-mer peptide.
+    """
+    return score_peptide_hla_binding(
+        peptide=req.peptide,
+        allele=req.allele,
+    )
+
 

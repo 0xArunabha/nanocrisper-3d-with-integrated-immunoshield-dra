@@ -5,6 +5,7 @@ import {
   BASE_EDITOR_DEFINITIONS,
   PAM_VARIANT_DEFINITIONS,
   bioEngineService,
+  remoteBioEngineService,
   calculateHlaRiskScore,
   filterEpitopesByHlaAlleles,
   isPreferredPam,
@@ -14,11 +15,38 @@ import {
   type GuideCandidate,
   type GenePreset,
   type PamVariant,
+  type BystanderEdit,
 } from './engines/bioEngines';
 import { NanoViewport3D } from './components/NanoViewport3D';
 import { GenomicSequenceViewer } from './components/GenomicSequenceViewer';
+import { PreIndDossierModal } from './components/PreIndDossierModal';
+import { ClinicalTourController, type CaseStudyId } from './components/ClinicalTourController';
+import type { DashboardTab } from './engines/types';
+import {
+  downloadIdtOrderSheet,
+  downloadGenScriptOrderSheet,
+} from './engines/crispr/orderSheetGenerator';
 import { tokens } from './styles/tokens';
-import { Share2, Download, Check, Copy } from 'lucide-react';
+import {
+  Share2,
+  Download,
+  Check,
+  Copy,
+  FileText,
+  Search,
+  Globe,
+  Sparkles,
+  Compass,
+  GraduationCap,
+  FlaskConical,
+  Dna,
+  Shield,
+  LayoutGrid,
+  Layers,
+  X,
+  Info,
+  ChevronRight,
+} from 'lucide-react';
 
 type SortField = 'id' | 'strand' | 'gcContent' | 'CompositeScore' | 'pam';
 type SortOrder = 'asc' | 'desc';
@@ -478,6 +506,59 @@ function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
   );
 }
 
+interface NewcomerStageTipProps {
+  stage: string;
+  title: string;
+  subtitle: string;
+  badgeText?: string;
+  bulletPoints?: string[];
+}
+
+function NewcomerStageTip({
+  stage,
+  title,
+  subtitle,
+  badgeText,
+  bulletPoints,
+}: NewcomerStageTipProps) {
+  return (
+    <div
+      style={{
+        backgroundColor: '#161411',
+        borderColor: '#b88644',
+        borderRadius: tokens.radius,
+      }}
+      className="p-3 border-l-4 border flex flex-col gap-2 shadow-sm"
+    >
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded bg-[#b88644]/20 text-[#d4a359] border border-[#b88644]/40">
+            {stage}
+          </span>
+          <span className="font-display font-semibold text-xs text-[#e8dfd1] flex items-center gap-1.5">
+            <Info className="w-3.5 h-3.5 text-[#d4a359]" />
+            {title}
+          </span>
+        </div>
+        {badgeText && (
+          <span className="text-[10px] text-[#a69b8d] font-mono-seq">{badgeText}</span>
+        )}
+      </div>
+      <p className="text-[#a69b8d] text-[11px] leading-relaxed">{subtitle}</p>
+      {bulletPoints && bulletPoints.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 border-t border-[#2a2621]">
+          {bulletPoints.map((point, idx) => (
+            <div key={idx} className="flex items-start gap-1.5 text-[11px] text-[#e8dfd1]">
+              <ChevronRight className="w-3.5 h-3.5 text-[#b88644] shrink-0 mt-0.5" />
+              <span className="text-[#a69b8d] leading-tight">{point}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const initialConfig = useMemo(() => parseUrlOrStorageConfig(), []);
 
@@ -520,6 +601,54 @@ export default function App() {
   const [selectedHlaAlleles, setSelectedHlaAlleles] = useState<string[]>(() => [
     ...SOUTH_ASIAN_HLA_ALLELES,
   ]);
+  const [isDossierModalOpen, setIsDossierModalOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('printDossier') === 'true' || params.get('dossier') === 'true';
+    }
+    return false;
+  });
+
+  // Dedicated Workflow Stage Mode / Dashboard Tab
+  const [activeTab, setActiveTab] = useState<DashboardTab>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const t = params.get('tab') as DashboardTab | null;
+      if (t && ['overview', 'crispr', 'lnp', 'immunology', 'batch'].includes(t)) return t;
+    }
+    return 'overview';
+  });
+
+  // Dedicated Audience Mode: Newcomer (Guided walkthrough) vs Expert Workbench (Full density)
+  const [workbenchMode, setWorkbenchMode] = useState<'newcomer' | 'expert'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const m = params.get('mode');
+      if (m === 'expert') return 'expert';
+      if (m === 'newcomer') return 'newcomer';
+    }
+    return 'newcomer';
+  });
+
+  // Newcomer guided banner dismissal state
+  const [dismissedNewcomerBanner, setDismissedNewcomerBanner] = useState<boolean>(false);
+
+  // Web Tour for Newcomers (Clinical Walkthrough Controller)
+  const [isTourOpen, setIsTourOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('tour') === 'true';
+    }
+    return false;
+  });
+  const [tourCase, setTourCase] = useState<CaseStudyId>('HBB');
+
+  const startClinicalWalkthrough = (caseId: CaseStudyId = 'HBB') => {
+    setTourCase(caseId);
+    setSelectedPresetId(caseId);
+    setIsCustomMode(false);
+    setIsTourOpen(true);
+  };
 
   // Table filtering and sorting
   const [sortField, setSortField] = useState<SortField>('CompositeScore');
@@ -532,6 +661,18 @@ export default function App() {
   const [copiedOligo, setCopiedOligo] = useState<'fwd' | 'rev' | null>(null);
   const [shareCopied, setShareCopied] = useState<boolean>(false);
   const [fastaSaved, setFastaSaved] = useState<boolean>(false);
+
+  // External Biological API & Genomic Search States (Tier 2 Enrichment)
+  const [geneSearchQuery, setGeneSearchQuery] = useState<string>('CFTR');
+  const [isSearchingGene, setIsSearchingGene] = useState<boolean>(false);
+  const [geneSearchError, setGeneSearchError] = useState<string | null>(null);
+
+  const [variantSearchQuery, setVariantSearchQuery] = useState<string>('rs10768683');
+  const [isSearchingVariant, setIsSearchingVariant] = useState<boolean>(false);
+  const [variantSearchError, setVariantSearchError] = useState<string | null>(null);
+
+  // ClinVar bystander enrichment state
+  const [annotatedBystanders, setAnnotatedBystanders] = useState<BystanderEdit[]>([]);
 
   // Formulation parameters
   const [lnpForm, setLnpForm] = useState<LnpFormulation>(() => ({
@@ -618,6 +759,91 @@ export default function App() {
       setSelectedGuideIdx(0);
     }
   }, [processedGuides.length, selectedGuideIdx]);
+
+  // Asynchronous ClinVar & Grantham bystander pathogenicity enrichment
+  useEffect(() => {
+    if (!selectedGuide || selectedGuide.bystanders.length === 0) {
+      setAnnotatedBystanders([]);
+      return;
+    }
+    let isCurrent = true;
+    remoteBioEngineService
+      .annotateBystandersWithClinVar(activePreset.id, selectedGuide.bystanders)
+      .then((annotated: BystanderEdit[]) => {
+        if (isCurrent && annotated && annotated.length > 0) {
+          setAnnotatedBystanders(annotated);
+        }
+      })
+      .catch(() => {
+        if (isCurrent) {
+          setAnnotatedBystanders(selectedGuide.bystanders);
+        }
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [selectedGuide, activePreset.id]);
+
+  const handleEnsemblGeneSearch = async (symbolToSearch?: string) => {
+    const sym = (symbolToSearch || geneSearchQuery).trim().toUpperCase();
+    if (!sym) return;
+    setIsSearchingGene(true);
+    setGeneSearchError(null);
+    try {
+      const result = await remoteBioEngineService.fetchExternalGene(sym);
+      if (result && !result.error && result.sequence) {
+        setCustomPreset({
+          id: result.id || sym,
+          symbol: result.symbol || `${sym} (Ensembl GRCh38)`,
+          name: result.name || `${sym} Gene Target`,
+          disease: result.disease || `Investigational Target (${sym})`,
+          targetOrgan: result.targetOrgan || 'Liver',
+          editorType: result.editorType || 'ABE8e (A→G)',
+          pamVariant: result.pamVariant || 'SpCas9',
+          sequence: result.sequence,
+          mutationIndex: Math.min(21, Math.max(0, result.sequence.length - 1)),
+          sasSnpIndex: Math.min(42, Math.max(0, result.sequence.length - 1)),
+          sasSnpId: result.sasSnpId || `Ensembl-${result.canonicalTranscriptId || 'CDS'}`,
+          sasAlleleFreq: result.sasAlleleFreq ?? 0.05,
+          clinicalNote: result.clinicalNote || `Ensembl REST API live annotation for ${sym}.`,
+        });
+        setIsCustomMode(true);
+        setSelectedGuideIdx(0);
+      } else {
+        setGeneSearchError(result?.error || `Gene '${sym}' not found in Ensembl GRCh38 database.`);
+      }
+    } catch (err: any) {
+      setGeneSearchError(err?.message || 'Failed to query Ensembl REST API.');
+    } finally {
+      setIsSearchingGene(false);
+    }
+  };
+
+  const handleVariantSearch = async () => {
+    const vid = variantSearchQuery.trim();
+    if (!vid) return;
+    setIsSearchingVariant(true);
+    setVariantSearchError(null);
+    try {
+      const res = await remoteBioEngineService.fetchExternalVariant(vid);
+      if (res && !res.variantId.includes('offline')) {
+        if (res.sasFrequency !== undefined) {
+          setCustomPreset((prev) => ({
+            ...prev,
+            sasSnpId: res.variantId,
+            sasAlleleFreq: res.sasFrequency ?? prev.sasAlleleFreq,
+            clinicalNote: `${prev.clinicalNote} [${res.name}: ${(res.clinicalSignificance || []).join(', ')}]`,
+          }));
+        }
+      } else {
+        setVariantSearchError('Variant unmapped or server offline.');
+      }
+    } catch (err: any) {
+      setVariantSearchError(err?.message || 'Variant lookup failed.');
+    } finally {
+      setIsSearchingVariant(false);
+    }
+  };
 
   // Cloning oligos for selected guide
   const cloningOligos = useMemo(() => {
@@ -859,6 +1085,27 @@ ${editedProtein}${guideHeader}
 
     setFastaSaved(true);
     setTimeout(() => setFastaSaved(false), 2000);
+  };
+
+  // Ready-to-Order Commercial Oligo Sheet Downloads (IDT and GenScript CSVs)
+  const handleDownloadIdt = (all: boolean = false) => {
+    if (processedGuides.length === 0) return;
+    const guidesToExport = all
+      ? processedGuides
+      : selectedGuide
+      ? [selectedGuide]
+      : [processedGuides[0]];
+    downloadIdtOrderSheet(guidesToExport, activePreset, !all);
+  };
+
+  const handleDownloadGenScript = (all: boolean = false) => {
+    if (processedGuides.length === 0) return;
+    const guidesToExport = all
+      ? processedGuides
+      : selectedGuide
+      ? [selectedGuide]
+      : [processedGuides[0]];
+    downloadGenScriptOrderSheet(guidesToExport, activePreset, !all);
   };
 
   // Clinical & Research LNP Benchmark Presets
@@ -1142,7 +1389,7 @@ ${epitopeRows}
           backgroundColor: tokens.colors.surface,
           borderColor: tokens.colors.border,
         }}
-        className="border-b px-4 py-2 flex flex-wrap items-center justify-between gap-3 shrink-0"
+        className={`border-b px-4 py-2 flex flex-wrap items-center justify-between gap-3 shrink-0 ${isDossierModalOpen ? 'print:hidden' : ''}`}
       >
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-2">
@@ -1213,10 +1460,57 @@ ${epitopeRows}
               Custom
             </button>
           </div>
+
+          {/* Dedicated Audience Mode: Newcomer vs Expert Workbench */}
+          <div
+            style={{
+              backgroundColor: tokens.colors.canvas,
+              borderColor: tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="flex items-center p-0.5 border text-xs"
+          >
+            <button
+              onClick={() => setWorkbenchMode('newcomer')}
+              style={{
+                backgroundColor: workbenchMode === 'newcomer' ? '#b88644' : 'transparent',
+                color: workbenchMode === 'newcomer' ? '#ffffff' : tokens.colors.textSecondary,
+                borderRadius: tokens.radius,
+              }}
+              className="px-2 py-0.5 font-medium transition cursor-pointer flex items-center gap-1.5"
+              title="Newcomer Guided Mode: streamlined walkthroughs, educational tips, and clinical presets"
+            >
+              <GraduationCap className="w-3.5 h-3.5" />
+              <span>Newcomer Mode</span>
+            </button>
+            <button
+              onClick={() => setWorkbenchMode('expert')}
+              style={{
+                backgroundColor: workbenchMode === 'expert' ? tokens.colors.surfaceSelected : 'transparent',
+                color: workbenchMode === 'expert' ? tokens.colors.textPrimary : tokens.colors.textSecondary,
+                borderRadius: tokens.radius,
+              }}
+              className="px-2 py-0.5 font-medium transition cursor-pointer flex items-center gap-1.5"
+              title="Expert Studio: unconstrained raw telemetry, custom sequence engineering, and deep biophysical controls"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Expert Studio</span>
+            </button>
+          </div>
         </div>
 
         {/* Right Action Bar */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Interactive Web Tour for Newcomers */}
+          <button
+            onClick={() => startClinicalWalkthrough('HBB')}
+            className="px-2.5 py-1 text-xs font-semibold rounded-[3px] bg-[#b88644] hover:bg-[#c99552] text-white flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+            title="Launch interactive step-by-step clinical walkthrough for newcomers"
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span>Clinical Tour (Newcomers)</span>
+          </button>
+
           {/* Share Config Link Button */}
           <button
             onClick={handleShareConfig}
@@ -1288,8 +1582,176 @@ ${epitopeRows}
           >
             Export pre-IND report (.md)
           </button>
+
+          <button
+            onClick={() => setIsDossierModalOpen(true)}
+            style={{
+              backgroundColor: '#0f766e',
+              borderColor: '#0d645e',
+              borderRadius: tokens.radius,
+              color: '#ffffff',
+            }}
+            className="px-3 py-1 text-xs font-semibold border hover:bg-[#115e59] transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+            title="Open Pre-IND Regulatory Technical Dossier (ICH M4Q / FDA eCTD Module 3 CMC)"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Pre-IND Dossier (Module 3)</span>
+          </button>
         </div>
       </header>
+
+      {/* Clinical Workflow Navigation Bar with Dedicated Modes */}
+      <nav
+        style={{
+          backgroundColor: tokens.colors.surface,
+          borderColor: tokens.colors.border,
+        }}
+        className="border-b px-4 py-1.5 flex items-center justify-between gap-2 overflow-x-auto select-none shrink-0"
+        aria-label="Workflow Navigation"
+      >
+        <div className="flex items-center gap-1">
+          {(
+            [
+              { id: 'overview', label: 'Panoramic Overview', icon: LayoutGrid, count: null, desc: 'Holistic multi-track view of all translation stages' },
+              { id: 'crispr', label: '1. Base Editor', icon: Dna, count: `${processedGuides.length} guides`, desc: 'Protospacers, bystanders & BsmBI cloning oligos' },
+              { id: 'lnp', label: '2. LNP Biophysics', icon: FlaskConical, count: `${biophysics.diameterNm}nm`, desc: '3D Cutaway, Henderson-Hasselbalch, CPP & SAXS' },
+              { id: 'immunology', label: '3. ImmunoShield', icon: Shield, count: residualHlaRisk !== null ? `CTL ${residualHlaRisk}` : null, desc: 'South Asian HLA Class I/II de-immunization' },
+              { id: 'batch', label: '4. Batch & Dossier', icon: FileText, count: `${batchCalculation.totalLipidMassMg}mg`, desc: 'Microfluidic mass scaling, IDT/GenScript & Pre-IND' },
+            ] as const
+          ).map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  backgroundColor: isActive ? tokens.colors.surfaceSelected : 'transparent',
+                  borderColor: isActive ? '#b88644' : 'transparent',
+                  color: isActive ? tokens.colors.textPrimary : tokens.colors.textSecondary,
+                  borderRadius: tokens.radius,
+                }}
+                className={`px-3 py-1.5 text-xs font-medium border flex items-center gap-2 transition cursor-pointer hover:text-[#e8dfd1] hover:bg-[#211e1a] shrink-0 ${
+                  isActive ? 'font-semibold shadow-xs' : ''
+                }`}
+                title={tab.desc}
+              >
+                <Icon
+                  className={`w-3.5 h-3.5 ${
+                    isActive ? 'text-[#b88644]' : 'text-[#70675c]'
+                  }`}
+                />
+                <span>{tab.label}</span>
+                {tab.count && (
+                  <span
+                    className={`text-[10px] font-mono-seq px-1.5 py-0.2 rounded ${
+                      isActive
+                        ? 'bg-[#2a2621] text-[#e8dfd1] border border-[#3a342c]'
+                        : 'bg-[#181613] text-[#70675c]'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Guided case study launcher in navigation bar */}
+        <div className="flex items-center gap-2.5 text-xs">
+          <div className="hidden md:flex items-center gap-1.5 text-[11px] text-[#70675c]">
+            <span>Active mode:</span>
+            <span className="text-[#d4a359] font-medium font-display">
+              {workbenchMode === 'newcomer' ? 'Newcomer Guided' : 'Expert Studio'}
+            </span>
+          </div>
+
+          <button
+            onClick={() => startClinicalWalkthrough(selectedPresetId === 'TTR' ? 'TTR' : 'HBB')}
+            className="px-2 py-0.5 rounded-[2px] bg-[#b88644]/15 hover:bg-[#b88644]/30 border border-[#b88644]/40 text-[#d4a359] hover:text-[#e8dfd1] flex items-center gap-1 transition cursor-pointer text-[11px]"
+            title="Start interactive guided walkthrough"
+          >
+            <Compass className="w-3 h-3 text-[#d4a359]" />
+            <span>Tour Case Study</span>
+          </button>
+        </div>
+      </nav>
+
+      {/* Newcomer Onboarding Guidance Banner */}
+      {workbenchMode === 'newcomer' && !dismissedNewcomerBanner && (
+        <div
+          style={{
+            backgroundColor: '#161411',
+            borderColor: '#b88644',
+            borderRadius: tokens.radius,
+          }}
+          className="mx-4 mt-3 p-3.5 border-l-4 border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs shadow-md"
+        >
+          <div className="flex items-start gap-3 flex-1">
+            <div className="w-8 h-8 rounded-[3px] bg-[#b88644]/20 border border-[#b88644]/40 text-[#d4a359] flex items-center justify-center shrink-0 mt-0.5">
+              <GraduationCap className="w-4 h-4" />
+            </div>
+            <div className="space-y-1 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-display font-bold text-xs text-[#e8dfd1]">
+                  Newcomer Guide: Translational Nanomedicine &amp; Precision Base Editing
+                </span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#24201b] text-[#d4a359] border border-[#3a342c] font-medium">
+                  Dedicated Newcomer Mode Active
+                </span>
+              </div>
+              <p className="text-[#a69b8d] text-[11px] leading-relaxed">
+                Welcome to NanoCRISPR-3D! This platform bridges 4 translational pillars: <strong>(1) Precision CRISPR base editing</strong> without double-strand DNA breaks, <strong>(2) Biophysical lipid nanoparticle (LNP) delivery</strong> with endosomal escape (<code className="text-[#98c2cc]">CPP &ge; 1.45</code>), <strong>(3) ImmunoShield South Asian HLA de-immunization</strong>, and <strong>(4) Wet-lab microfluidic mass scaling</strong>.
+              </p>
+              <div className="flex items-center gap-2 pt-1.5 flex-wrap">
+                <button
+                  onClick={() => startClinicalWalkthrough('HBB')}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-[2px] bg-[#0f766e] hover:bg-[#115e59] text-white flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  <span>Launch Guided Web Tour (6 Steps)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedPresetId('HBB');
+                    setIsCustomMode(false);
+                    setActiveTab('crispr');
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#e8dfd1] hover:text-[#d4a359] transition cursor-pointer flex items-center gap-1"
+                >
+                  <span>Case 1: Sickle Cell (HBB E6V &rarr; HbG)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedPresetId('TTR');
+                    setIsCustomMode(false);
+                    setActiveTab('lnp');
+                  }}
+                  className="px-2.5 py-1 text-[11px] font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#e8dfd1] hover:text-[#d4a359] transition cursor-pointer flex items-center gap-1"
+                >
+                  <span>Case 2: Amyloidosis (NTLA-2001 Benchmark)</span>
+                </button>
+                <button
+                  onClick={() => setWorkbenchMode('expert')}
+                  className="text-[11px] text-[#70675c] hover:text-[#a69b8d] underline ml-2 transition cursor-pointer"
+                >
+                  Switch to Expert Studio
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setDismissedNewcomerBanner(true)}
+            className="text-[#70675c] hover:text-[#e8dfd1] p-1 transition cursor-pointer shrink-0 self-start md:self-center"
+            title="Dismiss newcomer guide banner"
+            aria-label="Dismiss newcomer guide banner"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Custom Sequence Input Drawer (when active) */}
       {isCustomMode && (
@@ -1308,6 +1770,117 @@ ${epitopeRows}
               Dual-strand scanning will search both (+) and (-) orientations
             </span>
           </div>
+
+          {/* Tier 2: Live Biological Database Search Bar */}
+          <div
+            style={{
+              backgroundColor: tokens.colors.surfaceRaised,
+              borderColor: tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="p-2.5 border flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs"
+          >
+            <div className="flex flex-col md:flex-row items-start md:items-center gap-2 flex-1">
+              <span className="font-semibold text-[11px] text-[#e8dfd1] flex items-center gap-1.5 shrink-0">
+                <Globe className="w-3.5 h-3.5 text-[#4d828f]" />
+                Ensembl Live Lookup:
+              </span>
+              <div className="flex items-center gap-1.5 w-full md:w-auto">
+                <input
+                  type="text"
+                  placeholder="e.g. CFTR, HEXA, LDLR, DMD, HBA1"
+                  value={geneSearchQuery}
+                  onChange={(e) => setGeneSearchQuery(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleEnsemblGeneSearch();
+                  }}
+                  style={{
+                    backgroundColor: tokens.colors.canvas,
+                    borderColor: tokens.colors.border,
+                    borderRadius: tokens.radius,
+                  }}
+                  className="px-2 py-1 border text-xs font-mono text-[#e8dfd1] outline-none w-36 uppercase"
+                />
+                <button
+                  onClick={() => handleEnsemblGeneSearch()}
+                  disabled={isSearchingGene}
+                  style={{
+                    backgroundColor: tokens.colors.accent,
+                    borderRadius: tokens.radius,
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold text-white hover:brightness-110 transition cursor-pointer flex items-center gap-1 disabled:opacity-50 shrink-0"
+                >
+                  <Search className="w-3 h-3" />
+                  {isSearchingGene ? 'Querying...' : 'Fetch CDS'}
+                </button>
+              </div>
+
+              {/* Preset Chips */}
+              <div className="flex items-center gap-1 flex-wrap text-[10px]">
+                <span className="text-[#70675c]">Quick load:</span>
+                {['CFTR', 'HEXA', 'LDLR', 'DMD', 'HBA1'].map((sym) => (
+                  <button
+                    key={sym}
+                    onClick={() => {
+                      setGeneSearchQuery(sym);
+                      handleEnsemblGeneSearch(sym);
+                    }}
+                    style={{
+                      borderColor: tokens.colors.border,
+                      backgroundColor: tokens.colors.canvas,
+                    }}
+                    className="px-1.5 py-0.5 rounded border text-[#a69b8d] hover:text-[#e8dfd1] hover:border-[#4d828f] transition cursor-pointer"
+                  >
+                    {sym}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* dbSNP / ClinVar Variant Lookup */}
+            <div className="flex items-center gap-1.5 border-t md:border-t-0 md:border-l pt-2 md:pt-0 md:pl-3 border-[#2e2923] shrink-0">
+              <span className="text-[11px] text-[#a69b8d]">SAS SNP:</span>
+              <input
+                type="text"
+                placeholder="rs10768683"
+                value={variantSearchQuery}
+                onChange={(e) => setVariantSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleVariantSearch();
+                }}
+                style={{
+                  backgroundColor: tokens.colors.canvas,
+                  borderColor: tokens.colors.border,
+                  borderRadius: tokens.radius,
+                }}
+                className="px-2 py-1 border text-xs font-mono text-[#e8dfd1] outline-none w-28"
+              />
+              <button
+                onClick={handleVariantSearch}
+                disabled={isSearchingVariant}
+                style={{
+                  backgroundColor: tokens.colors.surface,
+                  borderColor: tokens.colors.border,
+                  borderRadius: tokens.radius,
+                }}
+                className="px-2 py-1 text-xs font-medium text-[#e8dfd1] border hover:border-[#4d828f] transition cursor-pointer disabled:opacity-50"
+              >
+                {isSearchingVariant ? '...' : 'Verify'}
+              </button>
+            </div>
+          </div>
+
+          {geneSearchError && (
+            <div className="text-[11px] text-[#cc6b5a] bg-[#2a1b18] border border-[#522923] px-2.5 py-1 rounded">
+              {geneSearchError}
+            </div>
+          )}
+
+          {variantSearchError && (
+            <div className="text-[11px] text-[#cc6b5a] bg-[#2a1b18] border border-[#522923] px-2.5 py-1 rounded">
+              {variantSearchError}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
             <div className="md:col-span-2">
@@ -1467,9 +2040,50 @@ ${epitopeRows}
       )}
 
       {/* Main Workstation Layout */}
-      <main className="flex-1 w-full max-w-[1920px] mx-auto p-3 grid grid-cols-1 lg:grid-cols-12 gap-3">
+      <main className={`flex-1 w-full max-w-[1920px] mx-auto p-3 grid grid-cols-1 lg:grid-cols-12 gap-3 ${isDossierModalOpen ? 'print:hidden' : ''}`}>
         {/* LEFT WORKSTATION: GENOMICS & BASE EDITING EVALUATION */}
-        <section className="lg:col-span-7 flex flex-col gap-3">
+        {(activeTab === 'overview' || activeTab === 'crispr' || activeTab === 'immunology') && (
+          <section className={`${activeTab === 'overview' ? 'lg:col-span-7' : 'lg:col-span-12'} flex flex-col gap-3`}>
+            {/* Newcomer Dedicated Mode Guidance Callout */}
+            {workbenchMode === 'newcomer' && activeTab === 'overview' && (
+              <NewcomerStageTip
+                stage="Panoramic Overview"
+                title="Translational Multi-Pillar Pipeline"
+                subtitle="Explore the end-to-end preclinical nanomedicine workflow connecting precision base editing, delivery biophysics, Cas9 de-immunization, and microfluidic batch formulation. Switch between dedicated stage tabs above for focused deep dives."
+                badgeText="4 Preclinical Pillars"
+                bulletPoints={[
+                  "1. Precision Base Editing without double-strand DNA breaks",
+                  "2. LNP Delivery with endosomal hexagonal (HII) fusion",
+                  "3. ImmunoShield South Asian HLA de-immunization",
+                ]}
+              />
+            )}
+            {workbenchMode === 'newcomer' && activeTab === 'crispr' && (
+              <NewcomerStageTip
+                stage="Stage 1: Base Editing"
+                title="Precision Deamination & Protospacer Discovery"
+                subtitle="Adenine (ABE8e) and Cytosine (BE4max) base editors chemically modify target nucleotides within the catalytic window (typically positions 4–8) without creating double-strand DNA breaks. Evaluate candidate sgRNAs, audit bystander modifications for pathogenicity, and retrieve Golden Gate BsmBI cloning oligos."
+                badgeText="Dual-Strand (+) / (-) Protospacer Search"
+                bulletPoints={[
+                  "Dual-strand candidate search with canonical NGG PAM variants",
+                  "Bystander codon audit with ClinVar & Grantham impact scores",
+                  "Golden Gate BsmBI cloning oligos with U6 transcription 5'-G",
+                ]}
+              />
+            )}
+            {workbenchMode === 'newcomer' && activeTab === 'immunology' && (
+              <NewcomerStageTip
+                stage="Stage 3: ImmunoShield-DRA"
+                title="South Asian HLA Cas9 De-Immunization"
+                subtitle="SpCas9 is derived from Streptococcus pyogenes. Up to 85% of humans possess pre-existing antibodies and cytotoxic CD8+ T-cells targeting Cas9 surface epitopes. ImmunoShield-DRA identifies immunogenic peptides presented by high-frequency South Asian HLA Class I/II alleles and applies targeted stealth mutations (e.g. L514A, Y823A) to neutralize CTL attack while preserving Cas9 endonuclease folding stability."
+                badgeText="Pan-Allele HLA Binding & CTL Risk Elimination"
+                bulletPoints={[
+                  "High-frequency South Asian alleles (HLA-A*02:11, HLA-A*24:02, HLA-B*40:06)",
+                  "Selective stealth substitutions disrupting T-cell receptor anchor binding",
+                  "Preservation of D10 and H840 active catalytic triad residues",
+                ]}
+              />
+            )}
           {/* Target Locus Metadata Bar */}
           <div
             style={{
@@ -1577,7 +2191,10 @@ ${epitopeRows}
             </div>
           </div>
 
-          {/* Interactive Multi-Track Monospace Sequence Visualizer */}
+          {/* CRISPR Base Editing Pipeline (Sequence Viewer, Protospacers & Bystanders) */}
+          {(activeTab === 'overview' || activeTab === 'crispr') && (
+            <>
+              {/* Interactive Multi-Track Monospace Sequence Visualizer */}
           <GenomicSequenceViewer
             preset={activePreset}
             selectedGuide={selectedGuide}
@@ -1843,103 +2460,151 @@ ${epitopeRows}
           </div>
 
           {/* Bystander Mutations Consequences Table */}
-          {selectedGuide && (
-            <div
-              style={{
-                backgroundColor: tokens.colors.surface,
-                borderColor: tokens.colors.border,
-                borderRadius: tokens.radius,
-              }}
-              className="border p-3 flex flex-col gap-2"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Deaminase window (spacer pos {editorWindowLabel}) bystander consequences
-                </h2>
-                <span className="text-[11px] text-[#70675c]">
-                  {selectedGuide.bystanders.length} potential edits in catalytic window
-                </span>
-              </div>
+          {selectedGuide && (() => {
+            const displayedBystanders =
+              annotatedBystanders.length === selectedGuide.bystanders.length
+                ? annotatedBystanders
+                : selectedGuide.bystanders;
 
-              {selectedGuide.bystanders.length === 0 ? (
-                <p className="text-[11px] text-[#70675c] py-2 text-center">
-                  No editable bases found within the active deamination window ({editorWindowLabel}). Clean on-target window.
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-xs">
-                    <thead>
-                      <tr
-                        style={{ borderColor: tokens.colors.border }}
-                        className="border-b text-[#a69b8d] text-[11px]"
-                      >
-                        <th className="py-1 px-2 font-medium">Spacer pos</th>
-                        <th className="py-1 px-2 font-medium">Genomic bp</th>
-                        <th className="py-1 px-2 font-medium">Original codon</th>
-                        <th className="py-1 px-2 font-medium">Original residue</th>
-                        <th className="py-1 px-2 font-medium">Edited codon</th>
-                        <th className="py-1 px-2 font-medium">Edited residue</th>
-                        <th className="py-1 px-2 font-medium">Consequence classification</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedGuide.bystanders.map((b, i) => {
-                        const isSafe =
-                          b.classification === 'Target Edit' ||
-                          b.classification === 'Silent (Synonymous)';
-                        const statusColor = isSafe
-                          ? tokens.colors.status.success
-                          : tokens.colors.status.danger;
-
-                        return (
-                          <tr
-                            key={i}
-                            style={{ borderColor: tokens.colors.borderMuted }}
-                            className="border-b text-[11px]"
-                          >
-                            <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">{b.guidePos}</td>
-                            <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">
-                              bp {b.genomicIndex + 1}
-                            </td>
-                            <td className="py-1 px-2 font-mono-seq tracking-wider">
-                              {b.originalCodon.split('').map((ch, cIdx) => (
-                                <span key={cIdx} className={getBaseColorClass(ch)}>
-                                  {ch}
-                                </span>
-                              ))}
-                            </td>
-                            <td className="py-1 px-2 font-mono-seq text-[#e8dfd1]">
-                              {b.originalAA}
-                            </td>
-                            <td className="py-1 px-2 font-mono-seq tracking-wider">
-                              {b.editedCodon.split('').map((ch, cIdx) => (
-                                <span key={cIdx} className={getBaseColorClass(ch)}>
-                                  {ch}
-                                </span>
-                              ))}
-                            </td>
-                            <td className="py-1 px-2 font-mono-seq text-[#e8dfd1]">{b.editedAA}</td>
-                            <td className="py-1 px-2">
-                              <span className="flex items-center gap-1.5">
-                                <span
-                                  style={{ backgroundColor: statusColor }}
-                                  className="w-1.5 h-1.5 rounded-full shrink-0"
-                                />
-                                <span className="text-[#e8dfd1]">{b.classification}</span>
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+            return (
+              <div
+                style={{
+                  backgroundColor: tokens.colors.surface,
+                  borderColor: tokens.colors.border,
+                  borderRadius: tokens.radius,
+                }}
+                className="border p-3 flex flex-col gap-2"
+              >
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
+                      Deaminase window (spacer pos {editorWindowLabel}) bystander consequences
+                    </h2>
+                    <span
+                      style={{
+                        borderColor: tokens.colors.border,
+                        backgroundColor: tokens.colors.surfaceRaised,
+                      }}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-[#73a880] border"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      ClinVar &amp; Grantham Evaluated
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-[#70675c]">
+                    {displayedBystanders.length} potential edits in catalytic window
+                  </span>
                 </div>
-              )}
-            </div>
+
+                {displayedBystanders.length === 0 ? (
+                  <p className="text-[11px] text-[#70675c] py-2 text-center">
+                    No editable bases found within the active deamination window ({editorWindowLabel}). Clean on-target window.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-left text-xs">
+                      <thead>
+                        <tr
+                          style={{ borderColor: tokens.colors.border }}
+                          className="border-b text-[#a69b8d] text-[11px]"
+                        >
+                          <th className="py-1 px-2 font-medium">Spacer pos</th>
+                          <th className="py-1 px-2 font-medium">Genomic bp</th>
+                          <th className="py-1 px-2 font-medium">Original codon</th>
+                          <th className="py-1 px-2 font-medium">Original residue</th>
+                          <th className="py-1 px-2 font-medium">Edited codon</th>
+                          <th className="py-1 px-2 font-medium">Edited residue</th>
+                          <th className="py-1 px-2 font-medium">Consequence classification</th>
+                          <th className="py-1 px-2 font-medium">ClinVar &amp; Grantham Impact</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayedBystanders.map((b, i) => {
+                          const isSafe =
+                            b.classification === 'Target Edit' ||
+                            b.classification === 'Silent (Synonymous)';
+                          const statusColor = isSafe
+                            ? tokens.colors.status.success
+                            : tokens.colors.status.danger;
+
+                          return (
+                            <tr
+                              key={i}
+                              style={{ borderColor: tokens.colors.borderMuted }}
+                              className="border-b text-[11px]"
+                            >
+                              <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">{b.guidePos}</td>
+                              <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">
+                                bp {b.genomicIndex + 1}
+                              </td>
+                              <td className="py-1 px-2 font-mono-seq tracking-wider">
+                                {b.originalCodon.split('').map((ch, cIdx) => (
+                                  <span key={cIdx} className={getBaseColorClass(ch)}>
+                                    {ch}
+                                  </span>
+                                ))}
+                              </td>
+                              <td className="py-1 px-2 font-mono-seq text-[#e8dfd1]">
+                                {b.originalAA}
+                              </td>
+                              <td className="py-1 px-2 font-mono-seq tracking-wider">
+                                {b.editedCodon.split('').map((ch, cIdx) => (
+                                  <span key={cIdx} className={getBaseColorClass(ch)}>
+                                    {ch}
+                                  </span>
+                                ))}
+                              </td>
+                              <td className="py-1 px-2 font-mono-seq text-[#e8dfd1]">{b.editedAA}</td>
+                              <td className="py-1 px-2">
+                                <span className="flex items-center gap-1.5">
+                                  <span
+                                    style={{ backgroundColor: statusColor }}
+                                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                                  />
+                                  <span className="text-[#e8dfd1]">{b.classification}</span>
+                                </span>
+                              </td>
+                              <td className="py-1 px-2">
+                                {b.clinvarTag ? (
+                                  <div className="flex flex-col gap-0.5">
+                                    <span
+                                      style={{
+                                        color: b.riskLevel?.includes('Pathogenic')
+                                          ? tokens.colors.status.danger
+                                          : b.riskLevel?.includes('Low') || b.riskLevel?.includes('Benign')
+                                          ? tokens.colors.status.success
+                                          : tokens.colors.accent,
+                                      }}
+                                      className="font-medium text-[10px]"
+                                    >
+                                      {b.clinvarTag}
+                                    </span>
+                                    {b.biochemicalImpact && (
+                                      <span className="text-[9.5px] text-[#70675c] leading-tight max-w-[240px] truncate block" title={b.biochemicalImpact}>
+                                        {b.biochemicalImpact}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-[#70675c]">Evaluating...</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+            </>
           )}
 
-          {/* Cas9 Epitope Immunogenicity Section (Interactive South Asian Alleles) */}
-          <div
+          {/* ImmunoShield-DRA Cas9 Epitope Immunogenicity Section (Interactive South Asian Alleles) */}
+          {(activeTab === 'overview' || activeTab === 'immunology') && (
+            <div
             style={{
               backgroundColor: tokens.colors.surface,
               borderColor: tokens.colors.border,
@@ -2141,10 +2806,27 @@ ${epitopeRows}
               </table>
             </div>
           </div>
-        </section>
+        )}
+      </section>
+    )}
 
-        {/* RIGHT WORKSTATION: LIPID NANOPARTICLE FORMULATION & BIOPHYSICS */}
-        <section className="lg:col-span-5 flex flex-col gap-3">
+      {/* RIGHT WORKSTATION: LIPID NANOPARTICLE FORMULATION & BIOPHYSICS */}
+      {(activeTab === 'overview' || activeTab === 'lnp') && (
+        <section className={`${activeTab === 'overview' ? 'lg:col-span-5' : 'lg:col-span-12'} flex flex-col gap-3`}>
+          {/* Newcomer Dedicated Mode Guidance Callout */}
+          {workbenchMode === 'newcomer' && activeTab === 'lnp' && (
+            <NewcomerStageTip
+              stage="Stage 2: LNP Delivery"
+              title="Lipid Nanoparticle Biophysics & Endosomal Escape"
+              subtitle="Formulate 4-component LNPs (Ionizable Lipid, DSPC, Cholesterol, PEG-Lipid). Ionizable lipids remain near-neutral at physiological blood pH 7.4 to evade immune clearance, but undergo protonation in acidic endosomes (pH 5.5). This induces the Israelachvili Critical Packing Parameter (CPP ≥ 1.45) transition into the inverted hexagonal (HII) phase, fusing with endosomal membranes to release mRNA into the cytoplasm."
+              badgeText="Israelachvili CPP ≥ 1.45 Fusion"
+              bulletPoints={[
+                "Ionizable lipid pKa 6.0-6.5 balances blood circulation and endosomal escape",
+                "Israelachvili CPP >= 1.45 triggers non-bilayer hexagonal membrane disruption",
+                "ApoE-mediated receptor uptake drives targeted hepatic/endothelial biodistribution",
+              ]}
+            />
+          )}
           {/* 3D Nanoparticle Cross-Section Viewport */}
           <div
             style={{
@@ -2555,8 +3237,8 @@ ${epitopeRows}
             <HendersonHasselbalchCurve lipidPka={lnpForm.lipidPka} />
           </div>
 
-          {/* Wet-Lab Batch Preparation Mass Calculator (Collapsible / Toggleable) */}
-          {showBatchCalc && (
+          {/* Wet-Lab Batch Preparation Mass Calculator (Collapsible / Toggleable in Overview) */}
+          {activeTab === 'overview' && showBatchCalc && (
             <div
               style={{
                 backgroundColor: tokens.colors.surface,
@@ -2913,7 +3595,417 @@ ${epitopeRows}
             </div>
           </div>
         </section>
+      )}
+
+      {/* DEDICATED STAGE 4 WORKSTATION: WET-LAB BATCH PREPARATION & CMC REGULATORY DOSSIER */}
+      {activeTab === 'batch' && (
+        <section className="lg:col-span-12 flex flex-col gap-3">
+          {/* Newcomer Dedicated Mode Guidance Callout */}
+          {workbenchMode === 'newcomer' && (
+            <NewcomerStageTip
+              stage="Stage 4: Wet-Lab Batch & CMC Dossier"
+              title="Microfluidic Mass Scaling, Commercial Oligo Ordering & Regulatory Technical Dossier"
+              subtitle="Translate cellular-scale dosages into physical milligram quantities of lipid and mRNA for microfluidic synthesis. Download commercial synthesis sheets formatted for IDT and GenScript, and launch the Pre-IND Regulatory Technical Dossier adhering to ICH M4Q / FDA eCTD Module 3 (CMC) standards."
+              badgeText="Microfluidic Dosing & FDA eCTD Module 3 CMC"
+              bulletPoints={[
+                "Calculate exact masses of mRNA and all 4 lipids for microfluidic mixing",
+                "Export 1-click IDT and GenScript CSV bulk synthesis order sheets",
+                "Review formal ICH M4Q / FDA eCTD Module 3 Pre-IND Dossier with release criteria",
+              ]}
+            />
+          )}
+
+          {/* Target Locus Metadata Bar */}
+          <div
+            style={{
+              backgroundColor: tokens.colors.surface,
+              borderColor: tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="border p-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24201b] pb-2 mb-2">
+              <div>
+                <span className="font-semibold text-sm text-[#e8dfd1] mr-2">
+                  {activePreset.symbol}
+                </span>
+                <span className="text-[#a69b8d] text-xs">{activePreset.name}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5 text-xs text-[#a69b8d]">
+                <span>
+                  Indication: <strong className="text-[#e8dfd1] font-medium">{activePreset.disease}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Target tissue: <strong className="text-[#e8dfd1] font-medium">{activePreset.targetOrgan}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Lead guide: <strong className="text-[#e8dfd1] font-mono-seq">{selectedGuide?.id ?? 'sgRNA-f1'}</strong>
+                </span>
+              </div>
+            </div>
+            <p className="text-[#70675c] text-[11px] leading-relaxed">
+              Batch mass scaling and regulatory specifications for clinical investigational drug product formulation.
+            </p>
+          </div>
+
+          {/* Wet-Lab Batch Preparation Mass Calculator (Full Width) */}
+          <div
+            style={{
+              backgroundColor: tokens.colors.surface,
+              borderColor: tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="border p-3.5 flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
+                  Wet-lab microfluidic batch preparation calculator
+                </h2>
+                <span className="text-[10px] font-mono-seq px-1.5 py-0.5 rounded bg-[#211e1a] text-[#d4a359] border border-[#332e27]">
+                  Flow Ratio 3:1 (Aqueous:Ethanol)
+                </span>
+              </div>
+              <span className="text-[11px] text-[#70675c]">
+                Physical component mass requirements for NanoAssemblr / microfluidic mixer
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <label className="text-[11px] text-[#a69b8d] block mb-1">
+                  Target batch volume (mL)
+                </label>
+                <input
+                  type="number"
+                  min={0.5}
+                  max={1000}
+                  step={1}
+                  value={batchVolumeMl}
+                  onChange={(e) =>
+                    setBatchVolumeMl(Math.max(0.1, parseFloat(e.target.value) || 10))
+                  }
+                  style={{
+                    backgroundColor: tokens.colors.canvas,
+                    borderColor: tokens.colors.border,
+                    borderRadius: tokens.radius,
+                  }}
+                  className="w-full p-2 border font-mono-seq text-xs text-[#e8dfd1] outline-none focus:border-[#4d828f]"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-[#a69b8d] block mb-1">
+                  mRNA concentration (mg/mL)
+                </label>
+                <input
+                  type="number"
+                  min={0.05}
+                  max={20}
+                  step={0.1}
+                  value={batchMrnaConcMgMl}
+                  onChange={(e) =>
+                    setBatchMrnaConcMgMl(Math.max(0.05, parseFloat(e.target.value) || 1))
+                  }
+                  style={{
+                    backgroundColor: tokens.colors.canvas,
+                    borderColor: tokens.colors.border,
+                    borderRadius: tokens.radius,
+                  }}
+                  className="w-full p-2 border font-mono-seq text-xs text-[#e8dfd1] outline-none focus:border-[#4d828f]"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-[#a69b8d] block mb-1">
+                  N/P Charge Ratio
+                </label>
+                <div className="p-2 border border-[#2e2923] rounded bg-[#181613] font-mono-seq text-xs text-[#e8dfd1] flex items-center justify-between">
+                  <span>{lnpForm.npRatio.toFixed(1)}:1</span>
+                  <span className="text-[10px] text-[#70675c]">Amine : Phosphate</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] text-[#a69b8d] block mb-1">
+                  Total Lipid:mRNA Ratio
+                </label>
+                <div className="p-2 border border-[#2e2923] rounded bg-[#181613] font-mono-seq text-xs text-[#e8dfd1] flex items-center justify-between">
+                  <span>{(batchCalculation.totalLipidMassMg / batchCalculation.totalMrnaMassMg).toFixed(1)}:1 w/w</span>
+                  <span className="text-[10px] text-[#73a880]">Clinical Standard</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Mass & Concentration Breakdown Table */}
+            <div className="overflow-x-auto pt-1">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr
+                    style={{ borderColor: tokens.colors.border }}
+                    className="border-b text-[#a69b8d] text-[11px]"
+                  >
+                    <th className="py-2 px-2.5 font-medium">Component</th>
+                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Molar %</th>
+                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Mass to Weigh (mg)</th>
+                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Concentration (mM)</th>
+                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Phase / Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    style={{ borderColor: tokens.colors.borderMuted }}
+                    className="border-b text-[11px]"
+                  >
+                    <td className="py-2 px-2.5 font-semibold text-[#e8dfd1]">
+                      mRNA Payload (Base Editor &amp; sgRNA)
+                    </td>
+                    <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">—</td>
+                    <td className="py-2 px-2.5 text-right font-mono-seq font-bold text-[#e8dfd1]">
+                      {batchCalculation.totalMrnaMassMg} mg
+                    </td>
+                    <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">
+                      {batchMrnaConcMgMl.toFixed(2)} mg/mL
+                    </td>
+                    <td className="py-2 px-2.5 text-right text-[#a69b8d]">Therapeutic Payload</td>
+                  </tr>
+                  {batchCalculation.components.map((c, i) => (
+                    <tr
+                      key={i}
+                      style={{ borderColor: tokens.colors.borderMuted }}
+                      className="border-b text-[11px] hover:bg-[#1a1714]"
+                    >
+                      <td className="py-2 px-2.5 text-[#e8dfd1] font-medium">{c.name}</td>
+                      <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">
+                        {c.molarPct.toFixed(1)}%
+                      </td>
+                      <td className="py-2 px-2.5 text-right font-mono-seq font-semibold text-[#e8dfd1]">
+                        {c.massMg} mg
+                      </td>
+                      <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">
+                        {c.molarConcMm} mM
+                      </td>
+                      <td className="py-2 px-2.5 text-right text-[#70675c] text-[10px]">
+                        {c.name.includes('Ionizable')
+                          ? 'Core Condensation'
+                          : c.name.includes('Helper')
+                          ? 'Bilayer Rigidity'
+                          : c.name.includes('Cholesterol')
+                          ? 'Membrane Fluidity'
+                          : 'Stealth Corona'}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="text-xs font-bold text-[#e8dfd1] bg-[#181613]">
+                    <td className="py-2.5 px-2.5">Total Lipid Formulation</td>
+                    <td className="py-2.5 px-2.5 text-right font-mono-seq">100.0%</td>
+                    <td className="py-2.5 px-2.5 text-right font-mono-seq text-[#d4a359]">
+                      {batchCalculation.totalLipidMassMg} mg
+                    </td>
+                    <td className="py-2.5 px-2.5 text-right font-mono-seq text-[#a69b8d]">
+                      Total Vol: {batchVolumeMl.toFixed(1)} mL
+                    </td>
+                    <td className="py-2.5 px-2.5 text-right text-[#5e946c] text-[11px]">
+                      N/P = {lnpForm.npRatio.toFixed(1)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Ready-to-Order Commercial Oligo Synthesis Portal (IDT & GenScript CSVs) */}
+          <div
+            style={{
+              backgroundColor: tokens.colors.surface,
+              borderColor: tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="border p-3.5 flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
+                  Commercial synthesis order sheets (BsmBI Golden Gate cloning oligos)
+                </h2>
+                <span className="text-[10px] font-mono-seq px-1.5 py-0.5 rounded bg-[#211e1a] text-[#73a880] border border-[#332e27]">
+                  IUPAC &amp; U6 Transcription Validated
+                </span>
+              </div>
+              <span className="text-[11px] text-[#70675c]">
+                Pre-formatted bulk CSVs for direct commercial synthesis upload
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              {/* IDT Order Card */}
+              <div className="p-3.5 rounded-[3px] bg-[#161411] border border-[#2e2923] flex flex-col justify-between gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-semibold text-xs text-[#e8dfd1]">Integrated DNA Technologies (IDT)</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#24201b] text-[#4d828f] border border-[#332e27]">
+                      4-Column CSV
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#a69b8d] leading-relaxed">
+                    Standard IDT bulk order format (<code className="text-[#98c2cc]">Name,Sequence,Scale,Purification</code>) with CACC/AAAC BsmBI overhangs and 5&apos;-G for human U6 promoter initiation.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 pt-2 border-t border-[#24201b] flex-wrap">
+                  <button
+                    onClick={() => handleDownloadIdt(false)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
+                    title="Download single CSV for selected candidate"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#4d828f]" />
+                    <span>Download Top Guide ({selectedGuide?.id ?? 'sgRNA-f1'}) CSV</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadIdt(true)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
+                    title="Download combined CSV for all discovered candidates"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#a69b8d]" />
+                    <span>All {processedGuides.length} Candidates CSV</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* GenScript Order Card */}
+              <div className="p-3.5 rounded-[3px] bg-[#161411] border border-[#2e2923] flex flex-col justify-between gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-semibold text-xs text-[#e8dfd1]">GenScript Molecular Portal</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#24201b] text-[#d4a359] border border-[#332e27]">
+                      8-Column Batch CSV
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#a69b8d] leading-relaxed">
+                    Compliant with GenScript High-Throughput Oligo Synthesis: 50 nmol scale, standard desalt purification, and sequence checksum notation.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 pt-2 border-t border-[#24201b] flex-wrap">
+                  <button
+                    onClick={() => handleDownloadGenScript(false)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
+                    title="Download single CSV for selected candidate"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#4d828f]" />
+                    <span>Download Top Guide ({selectedGuide?.id ?? 'sgRNA-f1'}) CSV</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadGenScript(true)}
+                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
+                    title="Download combined CSV for all discovered candidates"
+                  >
+                    <Download className="w-3.5 h-3.5 text-[#a69b8d]" />
+                    <span>All {processedGuides.length} Candidates CSV</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Pre-IND Regulatory Dossier Module 3 CMC Launch Desk */}
+          <div
+            style={{
+              backgroundColor: tokens.colors.surface,
+              borderColor: tokens.colors.border,
+              borderRadius: tokens.radius,
+            }}
+            className="border p-3.5 flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
+                  Pre-IND Regulatory Technical Dossier (ICH M4Q / FDA eCTD Module 3 CMC)
+                </h2>
+                <span className="text-[10px] font-mono-seq px-1.5 py-0.5 rounded bg-[#0f766e]/20 text-[#2dd4bf] border border-[#0f766e]/40">
+                  9 Regulatory Modules Ready
+                </span>
+              </div>
+              <span className="text-[11px] text-[#70675c]">
+                Pre-IND submission package for CDER / CBER review
+              </span>
+            </div>
+
+            <p className="text-[11px] text-[#a69b8d] leading-relaxed">
+              Review and print the complete technical dossier organized across <strong>3.2.S (Drug Substance: Engineered Cas9 RNP &amp; Modified sgRNA)</strong> and <strong>3.2.P (Drug Product: Encapsulated LNP Suspension)</strong>. Includes Sugimoto heteroduplex thermodynamics, Turner 2004 MFE partition, pan-allele South Asian HLA de-immunization audits, and microfluidic batch release criteria.
+            </p>
+
+            <div className="flex items-center gap-3 pt-1 flex-wrap">
+              <button
+                onClick={() => setIsDossierModalOpen(true)}
+                className="px-4 py-2 text-xs font-semibold rounded-[3px] bg-[#0f766e] hover:bg-[#115e59] text-white flex items-center gap-2 transition cursor-pointer shadow-sm"
+              >
+                <FileText className="w-4 h-4" />
+                <span>Launch Pre-IND Dossier Modal (Interactive &amp; Print/PDF)</span>
+              </button>
+              <button
+                onClick={downloadDraDossier}
+                className="px-3.5 py-2 text-xs font-medium rounded-[3px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#e8dfd1] flex items-center gap-2 transition cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-[#4d828f]" />
+                <span>Export Pre-IND Technical Dossier (.md)</span>
+              </button>
+              <button
+                onClick={handleExportTopFasta}
+                className="px-3.5 py-2 text-xs font-medium rounded-[3px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center gap-2 transition cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5 text-[#a69b8d]" />
+                <span>Export Multi-Record FASTA (.fasta)</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
       </main>
+
+      {/* Pre-IND Regulatory Technical Dossier Modal */}
+      <PreIndDossierModal
+        isOpen={isDossierModalOpen}
+        onClose={() => setIsDossierModalOpen(false)}
+        preset={activePreset}
+        selectedGuide={selectedGuide}
+        allGuides={allGuides}
+        formulation={activeFormulation}
+        biophysics={biophysics}
+        batchCalculation={batchCalculation}
+        batchVolumeMl={batchVolumeMl}
+        batchMrnaConcMgMl={batchMrnaConcMgMl}
+        selectedHlaAlleles={selectedHlaAlleles}
+        patientRelevantEpitopes={patientRelevantEpitopes}
+        activeStealthMutations={activeStealthMutations}
+        residualHlaRisk={residualHlaRisk}
+        onExportFasta={handleExportTopFasta}
+        onExportMarkdown={downloadDraDossier}
+      />
+
+      {/* Web Tour for Newcomers: Interactive Step-by-Step Clinical Walkthrough */}
+      <ClinicalTourController
+        isOpen={isTourOpen}
+        onClose={() => setIsTourOpen(false)}
+        activeCase={tourCase}
+        onSelectCase={(caseId) => {
+          setTourCase(caseId);
+          setSelectedPresetId(caseId);
+          setIsCustomMode(false);
+        }}
+        currentTab={activeTab}
+        onNavigateTab={(tab) => setActiveTab(tab)}
+        onApplyPreset={(presetId) => {
+          setSelectedPresetId(presetId);
+          setIsCustomMode(false);
+        }}
+        onSelectGuideIndex={(idx) => setSelectedGuideIdx(idx)}
+        onApplyFormulation={(form) => setLnpForm(form)}
+        onToggleHlaAllele={togglePatientHlaAllele}
+        onToggleStealthMutation={toggleSingleEpitope}
+        onSetBatchParameters={(volMl, concMgMl) => {
+          setBatchVolumeMl(volMl);
+          setBatchMrnaConcMgMl(concMgMl);
+        }}
+        onOpenDossier={() => setIsDossierModalOpen(true)}
+      />
     </div>
   );
 }

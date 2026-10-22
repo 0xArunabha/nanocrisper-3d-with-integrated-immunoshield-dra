@@ -7,7 +7,13 @@ import type {
   LnpFormulation,
   LnpBiophysicsResult,
   BatchMassCalculation,
-  EpitopeHotspot
+  EpitopeHotspot,
+  ThermodynamicProfile,
+  SecondaryStructureResult,
+  HomodimerResult,
+  BystanderEdit,
+  VariantAnnotation,
+  ExternalGeneMetadata
 } from './types';
 import { scanForGuides, translateSequence, reverseComplement } from './crispr/guideScanner';
 import { generateCloningOligos } from './crispr/oligoGenerator';
@@ -120,6 +126,125 @@ export class RemotePythonBioEngineService implements IBioEngineService {
       // Offline fallback to local engine
     }
     return this.localFallback.simulateLnpBiophysics(form);
+  }
+
+  async fetchThermodynamics(spacer: string): Promise<ThermodynamicProfile | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/crispr/thermodynamics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spacer })
+      });
+      if (res.ok) {
+        return (await res.json()) as ThermodynamicProfile;
+      }
+    } catch {
+      // Offline fallback
+    }
+    return null;
+  }
+
+  async fetchSecondaryStructure(sequence: string): Promise<SecondaryStructureResult | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/crispr/secondary-structure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sequence })
+      });
+      if (res.ok) {
+        return (await res.json()) as SecondaryStructureResult;
+      }
+    } catch {
+      // Offline fallback
+    }
+    return null;
+  }
+
+  async fetchHomodimer(spacer: string): Promise<HomodimerResult | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/crispr/homodimer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spacer })
+      });
+      if (res.ok) {
+        return (await res.json()) as HomodimerResult;
+      }
+    } catch {
+      // Offline fallback
+    }
+    return null;
+  }
+
+  async fetchExternalGene(symbol: string): Promise<ExternalGeneMetadata | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/external/gene/${encodeURIComponent(symbol)}`, {
+        method: 'GET'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (!data.error) {
+          return data as ExternalGeneMetadata;
+        }
+      }
+    } catch {
+      // Offline fallback
+    }
+    return null;
+  }
+
+  async fetchExternalVariant(rsid: string): Promise<VariantAnnotation | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/external/variant/${encodeURIComponent(rsid)}`, {
+        method: 'GET'
+      });
+      if (res.ok) {
+        return (await res.json()) as VariantAnnotation;
+      }
+    } catch {
+      // Offline fallback
+    }
+    return null;
+  }
+
+  async annotateBystandersWithClinVar(
+    geneSymbol: string,
+    bystanders: BystanderEdit[]
+  ): Promise<BystanderEdit[]> {
+    if (!bystanders || bystanders.length === 0) return [];
+    try {
+      const res = await fetch(`${this.baseUrl}/external/clinvar/annotate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ geneSymbol, bystanders })
+      });
+      if (res.ok) {
+        return (await res.json()) as BystanderEdit[];
+      }
+    } catch {
+      // Offline fallback
+    }
+    return bystanders;
+  }
+
+  async predictProteinEpitopes(
+    sequence: string,
+    allele: string,
+    minScore: number = 70
+  ): Promise<any[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/external/immunology/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sequence, allele, minScore })
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {
+      // Offline fallback
+    }
+    return [];
   }
 
   scanGuides(preset: GenePreset): GuideCandidate[] {
