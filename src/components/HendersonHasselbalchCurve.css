@@ -1,0 +1,111 @@
+/* src/components/HendersonHasselbalchCurve.css */
+
+.hh {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  background: var(--color-canvas, #12110f);
+  border: 1px solid var(--color-border-muted, #24201b);
+  border-radius: var(--radius-default, 3px);
+}
+
+.hh-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.hh-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+.hh-eq {
+  font: 400 10px/1.3 var(--font-mono, monospace);
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+/* Legend: landmarks and the two phase regimes, kept out of the plot so nothing overlaps the curve */
+.hh-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+.hh-legend li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.hh-legend i {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.hh-legend .hh-legend__band {
+  width: 12px;
+  height: 6px;
+  border-radius: 1px;
+  opacity: 0.55;
+}
+
+.hh-legend b {
+  font: 600 11px/1.3 var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+.hh-plot {
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+.hh-svg {
+  display: block;
+  max-width: none;
+  cursor: crosshair;
+}
+
+.hh-tip {
+  position: absolute;
+  top: 4px;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  max-width: calc(100% - 8px);
+  padding: 3px 8px;
+  transform: translateX(-50%);
+  font: 400 10px/1.3 var(--font-mono, monospace);
+  white-space: nowrap;
+  color: var(--color-text-secondary, #a69b8d);
+  background: color-mix(in srgb, var(--color-surface-raised, #211e1a) 95%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent, #4d828f) 60%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.hh-tip b {
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+.hh-tip__hii {
+  color: #cc6b5a;
+  font-weight: 600;
+}

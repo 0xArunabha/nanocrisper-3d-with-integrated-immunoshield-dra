@@ -1,0 +1,184 @@
+/* src/components/LnpFormulationPanel.css
+ *
+ * One card, four blocks: benchmark formulations, composition, assembly, ionization curve.
+ * The card is a size container, so the columns follow the width of the card rather than the window.
+ */
+
+.lnp {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--color-surface, #181613);
+  border: 1px solid var(--color-border, #332e27);
+  border-radius: var(--radius-default, 3px);
+}
+
+.lnp-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.lnp-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.lnp-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lnp-block + .lnp-block {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-muted, #24201b);
+}
+
+.lnp-block__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lnp-note {
+  font: 400 10.5px/1.3 var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+/* ---- benchmark cards ---- */
+.lnp-bench {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.lnp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px 7px;
+  text-align: left;
+  cursor: pointer;
+  background: var(--color-surface-raised, #211e1a);
+  border: 1px solid var(--color-border, #332e27);
+  border-radius: var(--radius-default, 3px);
+  transition: background-color 0.12s;
+}
+
+.lnp-card:hover {
+  background: var(--color-surface-hover, #2a2621);
+}
+
+.lnp-card:focus-visible {
+  outline: 2px solid var(--color-accent, #4d828f);
+  outline-offset: 1px;
+}
+
+.lnp-card[aria-pressed='true'] {
+  background: var(--color-surface-selected, #2c251d);
+  box-shadow: inset 0 -2px 0 var(--color-accent, #4d828f);
+}
+
+.lnp-card__name {
+  font: 600 12px/1.25 var(--font-sans, system-ui, sans-serif);
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+.lnp-card__lipid {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 10.5px/1.3 var(--font-mono, monospace);
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+.lnp-card__target {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 8px;
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border-muted, #24201b);
+  font: 400 10px/1.35 var(--font-mono, monospace);
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+.lnp-card__target span:last-child {
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+/* ---- composition bar ---- */
+.lnp-bar {
+  display: flex;
+  gap: 1px;
+  height: 10px;
+  background: var(--color-canvas, #12110f);
+  border: 1px solid var(--color-border, #332e27);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.lnp-bar > i {
+  display: block;
+  flex-basis: 0;
+  min-width: 2px;
+  transition: flex-grow 0.2s;
+}
+
+/* ---- sliders ---- */
+.lnp-sliders {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px 24px;
+}
+
+.lnp-balance {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 22px;
+}
+
+.lnp-balance__track {
+  flex: 1;
+  height: 4px;
+  background: var(--color-surface-raised, #211e1a);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.lnp-balance__track > i {
+  display: block;
+  height: 100%;
+  transition: width 0.2s;
+}
+
+@container (min-width: 460px) {
+  .lnp-bench {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lnp-sliders {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Full width (the LNP tab): all six benchmarks in one row and the four lipids side by side */
+@container (min-width: 1100px) {
+  .lnp-bench {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .lnp-sliders {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

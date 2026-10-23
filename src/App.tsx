@@ -4,11 +4,13 @@ import {
   GENE_PRESETS,
   BASE_EDITOR_DEFINITIONS,
   PAM_VARIANT_DEFINITIONS,
+  balanceCholesterol,
   bioEngineService,
   remoteBioEngineService,
   calculateHlaRiskScore,
   filterEpitopesByHlaAlleles,
   isPreferredPam,
+  sanitizeLnpFormulation,
   SOUTH_ASIAN_HLA_ALLELES,
   type BaseEditorType,
   type LnpFormulation,
@@ -17,8 +19,11 @@ import {
   type PamVariant,
   type BystanderEdit,
 } from './engines/bioEngines';
+import { editorFor, toWorkbenchGuide, toWorkbenchSnps } from './engines/crispr/workbenchAdapter';
 import { NanoViewport3D } from './components/NanoViewport3D';
-import { GenomicSequenceViewer } from './components/GenomicSequenceViewer';
+import { LnpFormulationPanel } from './components/LnpFormulationPanel';
+import { SequenceWorkbench } from './components/SequenceWorkbench';
+import { ToolButton } from './components/ui/controls';
 import { PreIndDossierModal } from './components/PreIndDossierModal';
 import { ClinicalTourController, type CaseStudyId } from './components/ClinicalTourController';
 import type { DashboardTab } from './engines/types';
@@ -67,14 +72,15 @@ const getBaseColorClass = (base: string) => {
   }
 };
 
-const STORAGE_KEY = 'nanocrispr_workbench_config_v2';
+const STORAGE_KEY = 'nanocrispr_workbench_config_v3';
 
 interface SavedWorkbenchConfig {
   presetId?: string;
   isCustom?: boolean;
   editor?: BaseEditorType;
   pam?: PamVariant;
-  guideIdx?: number;
+  /** Id of the guide the user picked, for example 'sgRNA-f3'. */
+  guideId?: string;
   ionizable?: number;
   dspc?: number;
   peg?: number;
@@ -82,33 +88,71 @@ interface SavedWorkbenchConfig {
   np?: number;
 }
 
+/** The formulation a new session starts from, and the fallback for any missing or invalid saved value. */
+const DEFAULT_LNP_FORM: LnpFormulation = {
+  ionizableLipid: 50.0,
+  dspcHelper: 10.0,
+  cholesterol: 38.5,
+  pegLipid: 1.5,
+  lipidPka: 6.35,
+  npRatio: 6.0,
+};
+
+// A shared link and localStorage are both untrusted input. Object.hasOwn keeps keys such as
+// 'constructor' or 'toString' from passing as editor or PAM names and crashing the render.
+const isEditorType = (value: unknown): value is BaseEditorType =>
+  typeof value === 'string' && Object.hasOwn(BASE_EDITOR_DEFINITIONS, value);
+
+const isPamVariant = (value: unknown): value is PamVariant =>
+  typeof value === 'string' && Object.hasOwn(PAM_VARIANT_DEFINITIONS, value);
+
+const isPresetId = (value: unknown): value is string =>
+  typeof value === 'string' && GENE_PRESETS.some((preset) => preset.id === value);
+
+/** Guide ids look like 'sgRNA-f12' (forward strand) or 'sgRNA-r3' (reverse strand). */
+const isGuideId = (value: unknown): value is string =>
+  typeof value === 'string' && /^sgRNA-[fr]\d{1,4}$/.test(value);
+
+/** A finite number from a query-string value or parsed JSON; anything else is dropped. */
+const toFiniteNumber = (value: unknown): number | undefined => {
+  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
+  return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+};
+
+/** Keeps only the fields that are valid. Keys are the shared-link parameter names. */
+function sanitizeConfig(raw: Record<string, unknown>): SavedWorkbenchConfig {
+  const preset = raw.preset;
+  const editor = raw.editor;
+  const pam = raw.pam;
+  const guide = raw.guide;
+  const isCustom = preset === 'CUSTOM';
+  return {
+    presetId: isCustom ? 'CUSTOM' : isPresetId(preset) ? preset : 'HBB',
+    isCustom,
+    editor: isEditorType(editor) ? editor : undefined,
+    pam: isPamVariant(pam) ? pam : undefined,
+    guideId: isGuideId(guide) ? guide : undefined,
+    ionizable: toFiniteNumber(raw.ionizable),
+    dspc: toFiniteNumber(raw.dspc),
+    peg: toFiniteNumber(raw.peg),
+    pka: toFiniteNumber(raw.pka),
+    np: toFiniteNumber(raw.np),
+  };
+}
+
 function parseUrlOrStorageConfig(): SavedWorkbenchConfig | null {
   try {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
-    const hasUrlParams =
-      params.has('preset') || params.has('editor') || params.has('ionizable') || params.has('pam');
-
-    if (hasUrlParams) {
-      const editorParam = params.get('editor') as BaseEditorType | null;
-      const pamParam = params.get('pam') as PamVariant | null;
-      return {
-        presetId: params.get('preset') || 'HBB',
-        isCustom: params.get('preset') === 'CUSTOM',
-        editor: editorParam && BASE_EDITOR_DEFINITIONS[editorParam] ? editorParam : undefined,
-        pam: pamParam && PAM_VARIANT_DEFINITIONS[pamParam] ? pamParam : undefined,
-        guideIdx: params.has('guide') ? parseInt(params.get('guide')!, 10) : 0,
-        ionizable: params.has('ionizable') ? parseFloat(params.get('ionizable')!) : 50.0,
-        dspc: params.has('dspc') ? parseFloat(params.get('dspc')!) : 10.0,
-        peg: params.has('peg') ? parseFloat(params.get('peg')!) : 1.5,
-        pka: params.has('pka') ? parseFloat(params.get('pka')!) : 6.35,
-        np: params.has('np') ? parseFloat(params.get('np')!) : 6.0,
-      };
-    }
+    const hasUrlParams = ['preset', 'editor', 'pam', 'ionizable'].some((key) => params.has(key));
+    if (hasUrlParams) return sanitizeConfig(Object.fromEntries(params));
 
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      return JSON.parse(saved);
+      const parsed: unknown = JSON.parse(saved);
+      if (parsed !== null && typeof parsed === 'object') {
+        return sanitizeConfig(parsed as Record<string, unknown>);
+      }
     }
   } catch (err) {
     console.warn('Could not parse workbench configuration:', err);
@@ -116,395 +160,6 @@ function parseUrlOrStorageConfig(): SavedWorkbenchConfig | null {
   return null;
 }
 
-/**
- * Interactive SVG Henderson-Hasselbalch ionization and H_II hexagonal phase transition curve.
- * Plots % protonation across pH 4.5 -> 8.0, marking Late Endosome (pH 5.5), Apparent pKa (50%),
- * Systemic Blood (pH 7.4), and the CPP >= 1.45 (L_alpha -> H_II hexagonal fusion) threshold.
- */
-function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
-  const [hoveredPh, setHoveredPh] = useState<number | null>(null);
-
-  // SVG canvas dimensions
-  const width = 500;
-  const height = 190;
-  const padding = { top: 22, right: 30, bottom: 32, left: 44 };
-  const plotW = width - padding.left - padding.right;
-  const plotH = height - padding.top - padding.bottom;
-
-  const phMin = 4.5;
-  const phMax = 8.0;
-
-  const getX = (ph: number) => padding.left + ((ph - phMin) / (phMax - phMin)) * plotW;
-  const getY = (alpha: number) => padding.top + (1 - alpha / 100) * plotH;
-
-  // Henderson-Hasselbalch: % = 100 / (1 + 10^(pH - pKa))
-  const getAlpha = (ph: number) => 100 / (1 + Math.pow(10, ph - lipidPka));
-  const getCpp = (alpha: number) => Number((1.08 + (alpha / 100) * 0.58).toFixed(2));
-
-  // Critical packing parameter transition CPP >= 1.45 => alpha >= 63.79%
-  const alphaHii = 63.793;
-  const yHiiThreshold = getY(alphaHii);
-
-  // Generate curve path
-  const curvePoints: [number, number][] = [];
-  const steps = 70;
-  for (let i = 0; i <= steps; i++) {
-    const ph = phMin + (i / steps) * (phMax - phMin);
-    const alpha = getAlpha(ph);
-    curvePoints.push([getX(ph), getY(alpha)]);
-  }
-
-  const pathD = curvePoints.reduce(
-    (acc, [x, y], i) => `${acc} ${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`,
-    ''
-  );
-  const areaD = `${pathD} L ${getX(phMax).toFixed(1)} ${getY(0).toFixed(1)} L ${getX(phMin).toFixed(
-    1
-  )} ${getY(0).toFixed(1)} Z`;
-
-  // Key landmarks
-  const endoPh = 5.5;
-  const endoAlpha = getAlpha(endoPh);
-  const endoX = getX(endoPh);
-  const endoY = getY(endoAlpha);
-
-  const pkaX = getX(lipidPka);
-  const pkaY = getY(50);
-
-  const bloodPh = 7.4;
-  const bloodAlpha = getAlpha(bloodPh);
-  const bloodX = getX(bloodPh);
-  const bloodY = getY(bloodAlpha);
-
-  // Active hover calculation directly computed without hook overhead
-  const hoverData =
-    hoveredPh !== null
-      ? (() => {
-          const alpha = getAlpha(hoveredPh);
-          const cpp = getCpp(alpha);
-          const isHii = cpp >= 1.45;
-          return {
-            ph: hoveredPh,
-            alpha,
-            cpp,
-            x: getX(hoveredPh),
-            y: getY(alpha),
-            phase: isHii ? 'Inverted Hexagonal (HII Fusion)' : 'Lamellar / Micellar (Lα)',
-          };
-        })()
-      : null;
-
-  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const clientX = e.clientX - rect.left;
-    const svgX = (clientX / rect.width) * width;
-    const clampedSvgX = Math.max(padding.left, Math.min(width - padding.right, svgX));
-    const ph = phMin + ((clampedSvgX - padding.left) / plotW) * (phMax - phMin);
-    setHoveredPh(Number(ph.toFixed(2)));
-  };
-
-  return (
-    <div className="flex flex-col gap-1.5 p-2.5 rounded-[3px] bg-[#12110f] border border-[#24201b]">
-      <div className="flex items-center justify-between text-[11px] flex-wrap gap-1">
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-[#e8dfd1]">
-            Henderson-Hasselbalch Ionization &amp; H<sub>II</sub> Phase Transition
-          </span>
-          <span className="text-[10px] font-mono text-[#a69b8d]">
-            pK<sub>a</sub> = {lipidPka.toFixed(2)}
-          </span>
-        </div>
-        <div className="text-[10px] font-mono text-[#70675c]">
-          CPP = 1.08 + 0.58·(α)
-        </div>
-      </div>
-
-      <div className="relative w-full overflow-hidden select-none">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          className="w-full h-auto cursor-crosshair"
-          onPointerMove={handlePointerMove}
-          onPointerLeave={() => setHoveredPh(null)}
-        >
-          <defs>
-            <linearGradient id="hhGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#4d828f" stopOpacity="0.32" />
-              <stop offset="70%" stopColor="#4d828f" stopOpacity="0.08" />
-              <stop offset="100%" stopColor="#4d828f" stopOpacity="0.0" />
-            </linearGradient>
-            <linearGradient id="curveStroke" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#5e946c" />
-              <stop offset="45%" stopColor="#cfa052" />
-              <stop offset="85%" stopColor="#4d828f" />
-            </linearGradient>
-          </defs>
-
-          {/* Shaded H_II Inverted Hexagonal Regime (CPP >= 1.45, alpha >= 63.8%) */}
-          <rect
-            x={padding.left}
-            y={padding.top}
-            width={plotW}
-            height={yHiiThreshold - padding.top}
-            fill="#b85b46"
-            fillOpacity="0.08"
-          />
-          <line
-            x1={padding.left}
-            y1={yHiiThreshold}
-            x2={width - padding.right}
-            y2={yHiiThreshold}
-            stroke="#b85b46"
-            strokeDasharray="4 3"
-            strokeWidth="1"
-            strokeOpacity="0.75"
-          />
-          <text
-            x={width - padding.right - 4}
-            y={yHiiThreshold - 4}
-            textAnchor="end"
-            fontSize="8.5"
-            fontFamily="monospace"
-            fill="#cc6b5a"
-            fontWeight="bold"
-          >
-            HII Hexagonal Fusion (CPP ≥ 1.45 • α ≥ 64%)
-          </text>
-          <text
-            x={width - padding.right - 4}
-            y={yHiiThreshold + 11}
-            textAnchor="end"
-            fontSize="8"
-            fontFamily="monospace"
-            fill="#70675c"
-          >
-            Lα Lamellar Bilayer (CPP &lt; 1.45)
-          </text>
-
-          {/* Grid lines: % Protonation */}
-          {[0, 25, 50, 75, 100].map((pct) => {
-            const y = getY(pct);
-            return (
-              <g key={pct}>
-                <line
-                  x1={padding.left}
-                  y1={y}
-                  x2={width - padding.right}
-                  y2={y}
-                  stroke="#24201b"
-                  strokeWidth="1"
-                  strokeDasharray={pct === 50 ? '3 3' : undefined}
-                />
-                <text
-                  x={padding.left - 6}
-                  y={y + 3}
-                  textAnchor="end"
-                  fontSize="8.5"
-                  fontFamily="monospace"
-                  fill="#70675c"
-                >
-                  {pct}%
-                </text>
-              </g>
-            );
-          })}
-
-          {/* Grid lines: pH values */}
-          {[4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0].map((phVal) => {
-            const x = getX(phVal);
-            return (
-              <g key={phVal}>
-                <line
-                  x1={x}
-                  y1={padding.top}
-                  x2={x}
-                  y2={height - padding.bottom}
-                  stroke="#24201b"
-                  strokeWidth="1"
-                  strokeDasharray={phVal === 5.5 || phVal === 7.4 ? '2 2' : undefined}
-                />
-                <text
-                  x={x}
-                  y={height - padding.bottom + 14}
-                  textAnchor="middle"
-                  fontSize="8.5"
-                  fontFamily="monospace"
-                  fill={phVal === 5.5 || phVal === 7.4 ? '#a69b8d' : '#70675c'}
-                  fontWeight={phVal === 5.5 || phVal === 7.4 ? 'bold' : 'normal'}
-                >
-                  {phVal.toFixed(1)}
-                </text>
-              </g>
-            );
-          })}
-
-          {/* Under-curve gradient fill */}
-          <path d={areaD} fill="url(#hhGradient)" />
-
-          {/* Sigmoidal Protonation Curve */}
-          <path
-            d={pathD}
-            fill="none"
-            stroke="url(#curveStroke)"
-            strokeWidth="2"
-            strokeLinecap="round"
-          />
-
-          {/* Landmark: Late Endosome (pH 5.5) */}
-          <line
-            x1={endoX}
-            y1={endoY}
-            x2={endoX}
-            y2={height - padding.bottom}
-            stroke="#5e946c"
-            strokeWidth="1.2"
-            strokeDasharray="3 2"
-          />
-          <circle cx={endoX} cy={endoY} r="4" fill="#5e946c" stroke="#181613" strokeWidth="1.5" />
-          <text
-            x={endoX - 4}
-            y={endoY - 6}
-            textAnchor="end"
-            fontSize="8.5"
-            fontFamily="monospace"
-            fill="#73a880"
-            fontWeight="bold"
-          >
-            pH 5.5 Endosome ({endoAlpha.toFixed(0)}%)
-          </text>
-
-          {/* Landmark: Apparent pKa (50% protonation) */}
-          {lipidPka >= phMin && lipidPka <= phMax && (
-            <g>
-              <line
-                x1={pkaX}
-                y1={pkaY}
-                x2={pkaX}
-                y2={height - padding.bottom}
-                stroke="#cfa052"
-                strokeWidth="1"
-                strokeDasharray="2 2"
-              />
-              <line
-                x1={padding.left}
-                y1={pkaY}
-                x2={pkaX}
-                y2={pkaY}
-                stroke="#cfa052"
-                strokeWidth="1"
-                strokeDasharray="2 2"
-              />
-              <circle cx={pkaX} cy={pkaY} r="3.5" fill="#cfa052" stroke="#181613" strokeWidth="1.5" />
-              <text
-                x={pkaX + 6}
-                y={pkaY - 4}
-                textAnchor="start"
-                fontSize="8.5"
-                fontFamily="monospace"
-                fill="#df9e51"
-                fontWeight="bold"
-              >
-                pKa {lipidPka.toFixed(2)} (50%)
-              </text>
-            </g>
-          )}
-
-          {/* Landmark: Systemic Blood (pH 7.4) */}
-          <line
-            x1={bloodX}
-            y1={bloodY}
-            x2={bloodX}
-            y2={height - padding.bottom}
-            stroke="#4d828f"
-            strokeWidth="1.2"
-            strokeDasharray="3 2"
-          />
-          <circle cx={bloodX} cy={bloodY} r="4" fill="#4d828f" stroke="#181613" strokeWidth="1.5" />
-          <text
-            x={bloodX + 4}
-            y={bloodY - 6}
-            textAnchor="start"
-            fontSize="8.5"
-            fontFamily="monospace"
-            fill="#98c2cc"
-            fontWeight="bold"
-          >
-            pH 7.4 Blood ({bloodAlpha.toFixed(0)}%)
-          </text>
-
-          {/* Interactive Crosshair & Cursor */}
-          {hoverData && (
-            <g>
-              <line
-                x1={hoverData.x}
-                y1={padding.top}
-                x2={hoverData.x}
-                y2={height - padding.bottom}
-                stroke="#e8dfd1"
-                strokeWidth="1"
-                strokeDasharray="2 2"
-                strokeOpacity="0.8"
-              />
-              <circle
-                cx={hoverData.x}
-                cy={hoverData.y}
-                r="4.5"
-                fill="#e8dfd1"
-                stroke="#12110f"
-                strokeWidth="2"
-              />
-            </g>
-          )}
-
-          {/* X Axis label */}
-          <text
-            x={padding.left + plotW / 2}
-            y={height - 4}
-            textAnchor="middle"
-            fontSize="9"
-            fontFamily="sans-serif"
-            fill="#a69b8d"
-          >
-            Ambient pH (Endosome 5.5 → Physiological Blood 7.4)
-          </text>
-
-          {/* Y Axis label */}
-          <text
-            transform="rotate(-90)"
-            x={-(padding.top + plotH / 2)}
-            y={12}
-            textAnchor="middle"
-            fontSize="9"
-            fontFamily="sans-serif"
-            fill="#a69b8d"
-          >
-            Protonation % (α)
-          </text>
-        </svg>
-
-        {/* Floating Scrubber HUD Tooltip */}
-        {hoverData && (
-          <div
-            style={{
-              left: `${Math.min(74, Math.max(14, (hoverData.x / width) * 100))}%`,
-              top: '4px',
-            }}
-            className="absolute pointer-events-none transform -translate-x-1/2 px-2 py-0.5 rounded-[2px] bg-[#1c1a16]/95 border border-[#4d828f]/60 text-[10px] font-mono shadow-md flex items-center gap-2 z-10"
-          >
-            <span className="text-[#e8dfd1] font-bold">pH {hoverData.ph.toFixed(2)}</span>
-            <span className="text-[#4d828f]">{hoverData.alpha.toFixed(1)}% ionized</span>
-            <span className="text-[#cfa052]">CPP = {hoverData.cpp}</span>
-            <span
-              className={hoverData.cpp >= 1.45 ? 'text-[#cc6b5a] font-semibold' : 'text-[#70675c]'}
-            >
-              {hoverData.cpp >= 1.45 ? 'HII Fusion' : 'Lα Phase'}
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 interface NewcomerStageTipProps {
   stage: string;
@@ -589,8 +244,9 @@ export default function App() {
     clinicalNote: 'Custom sequence evaluation for protospacer discovery and bystander deamination.',
   });
 
-  const [selectedGuideIdx, setSelectedGuideIdx] = useState<number>(
-    () => initialConfig?.guideIdx ?? 0
+  // Id of the guide the user picked ('sgRNA-f3'); null means "the top-ranked candidate"
+  const [selectedGuideId, setSelectedGuideId] = useState<string | null>(
+    () => initialConfig?.guideId ?? null
   );
 
   // Per-epitope stealth mutation state
@@ -647,6 +303,7 @@ export default function App() {
     setTourCase(caseId);
     setSelectedPresetId(caseId);
     setIsCustomMode(false);
+    setSelectedGuideId(null);
     setIsTourOpen(true);
   };
 
@@ -661,6 +318,7 @@ export default function App() {
   const [copiedOligo, setCopiedOligo] = useState<'fwd' | 'rev' | null>(null);
   const [shareCopied, setShareCopied] = useState<boolean>(false);
   const [fastaSaved, setFastaSaved] = useState<boolean>(false);
+  const [reportSaved, setReportSaved] = useState<boolean>(false);
 
   // External Biological API & Genomic Search States (Tier 2 Enrichment)
   const [geneSearchQuery, setGeneSearchQuery] = useState<string>('CFTR');
@@ -674,15 +332,19 @@ export default function App() {
   // ClinVar bystander enrichment state
   const [annotatedBystanders, setAnnotatedBystanders] = useState<BystanderEdit[]>([]);
 
-  // Formulation parameters
-  const [lnpForm, setLnpForm] = useState<LnpFormulation>(() => ({
-    ionizableLipid: initialConfig?.ionizable ?? 50.0,
-    dspcHelper: initialConfig?.dspc ?? 10.0,
-    cholesterol: 38.5,
-    pegLipid: initialConfig?.peg ?? 1.5,
-    lipidPka: initialConfig?.pka ?? 6.35,
-    npRatio: initialConfig?.np ?? 6.0,
-  }));
+  // Formulation parameters. A link or saved value outside the slider ranges is clamped, never trusted.
+  const [lnpForm, setLnpForm] = useState<LnpFormulation>(() =>
+    sanitizeLnpFormulation(
+      {
+        ionizableLipid: initialConfig?.ionizable,
+        dspcHelper: initialConfig?.dspc,
+        pegLipid: initialConfig?.peg,
+        lipidPka: initialConfig?.pka,
+        npRatio: initialConfig?.np,
+      },
+      DEFAULT_LNP_FORM
+    )
+  );
 
   // Wet-lab batch calculator parameters
   const [batchVolumeMl, setBatchVolumeMl] = useState<number>(10.0);
@@ -750,15 +412,15 @@ export default function App() {
     sortOrder,
   ]);
 
+  // The selection is kept by id, so sorting and filtering never move it. When the picked guide is
+  // filtered out, or a new editor / PAM changes the candidate set, the top-ranked guide takes over.
   const selectedGuide: GuideCandidate | undefined =
-    processedGuides[selectedGuideIdx] || processedGuides[0] || allGuides[0];
+    processedGuides.find((g) => g.id === selectedGuideId) ?? processedGuides[0] ?? allGuides[0];
 
-  // Auto-reset active guide index when filters reduce candidate count
-  useEffect(() => {
-    if (processedGuides.length > 0 && selectedGuideIdx >= processedGuides.length) {
-      setSelectedGuideIdx(0);
-    }
-  }, [processedGuides.length, selectedGuideIdx]);
+  // What SequenceWorkbench draws, derived from the engine's own editor and guide definitions
+  const workbenchEditor = useMemo(() => editorFor(activePreset), [activePreset]);
+  const workbenchGuides = useMemo(() => processedGuides.map(toWorkbenchGuide), [processedGuides]);
+  const workbenchSnps = useMemo(() => toWorkbenchSnps(activePreset), [activePreset]);
 
   // Asynchronous ClinVar & Grantham bystander pathogenicity enrichment
   useEffect(() => {
@@ -808,7 +470,7 @@ export default function App() {
           clinicalNote: result.clinicalNote || `Ensembl REST API live annotation for ${sym}.`,
         });
         setIsCustomMode(true);
-        setSelectedGuideIdx(0);
+        setSelectedGuideId(null);
       } else {
         setGeneSearchError(result?.error || `Gene '${sym}' not found in Ensembl GRCh38 database.`);
       }
@@ -851,14 +513,8 @@ export default function App() {
     return bioEngineService.generateCloningOligos(selectedGuide.spacer);
   }, [selectedGuide]);
 
-  // Dynamic Cholesterol balancing to strictly lock stoichiometry at 100.0%
-  // Ensures Ionizable + DSPC + PEG never exceeds 95.0% so cholesterol >= 5.0%
-  const effectiveCholesterol = useMemo(() => {
-    return Math.max(
-      5.0,
-      Number((100 - lnpForm.ionizableLipid - lnpForm.dspcHelper - lnpForm.pegLipid).toFixed(1))
-    );
-  }, [lnpForm.ionizableLipid, lnpForm.dspcHelper, lnpForm.pegLipid]);
+  // Cholesterol is not a control: it takes whatever is left of 100 mol% (never below 5).
+  const effectiveCholesterol = balanceCholesterol(lnpForm);
 
   const activeFormulation = useMemo<LnpFormulation>(
     () => ({
@@ -905,37 +561,22 @@ export default function App() {
     return calculateHlaRiskScore(patientRelevantEpitopes, activeStealthMutations);
   }, [hasPatientHlaSelection, patientRelevantEpitopes, activeStealthMutations]);
 
-  // URL query & localStorage persistence synchronization
+  // URL query & localStorage persistence. Both use the same keys as the shared link.
   useEffect(() => {
     try {
-      const config: SavedWorkbenchConfig = {
-        presetId: isCustomMode ? 'CUSTOM' : selectedPresetId,
-        isCustom: isCustomMode,
-        editor: editorOverride ?? undefined,
-        pam: pamOverride ?? undefined,
-        guideIdx: selectedGuideIdx,
-        ionizable: lnpForm.ionizableLipid,
-        dspc: lnpForm.dspcHelper,
-        peg: lnpForm.pegLipid,
-        pka: lnpForm.lipidPka,
-        np: lnpForm.npRatio,
-      };
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-
       const params = new URLSearchParams();
-      params.set('preset', config.presetId!);
-      if (config.editor) params.set('editor', config.editor);
-      if (config.pam) params.set('pam', config.pam);
-      if (config.guideIdx && config.guideIdx > 0) params.set('guide', config.guideIdx.toString());
-      params.set('ionizable', config.ionizable!.toString());
-      params.set('dspc', config.dspc!.toString());
-      params.set('peg', config.peg!.toString());
-      params.set('pka', config.pka!.toString());
-      params.set('np', config.np!.toString());
+      params.set('preset', isCustomMode ? 'CUSTOM' : selectedPresetId);
+      if (editorOverride) params.set('editor', editorOverride);
+      if (pamOverride) params.set('pam', pamOverride);
+      if (selectedGuideId) params.set('guide', selectedGuideId);
+      params.set('ionizable', lnpForm.ionizableLipid.toString());
+      params.set('dspc', lnpForm.dspcHelper.toString());
+      params.set('peg', lnpForm.pegLipid.toString());
+      params.set('pka', lnpForm.lipidPka.toString());
+      params.set('np', lnpForm.npRatio.toString());
 
-      const newUrl = `${window.location.pathname}?${params.toString()}`;
-      window.history.replaceState(null, '', newUrl);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(params)));
+      window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
     } catch {
       // ignore in restricted browser environments
     }
@@ -944,32 +585,13 @@ export default function App() {
     selectedPresetId,
     editorOverride,
     pamOverride,
-    selectedGuideIdx,
+    selectedGuideId,
     lnpForm.ionizableLipid,
     lnpForm.dspcHelper,
     lnpForm.pegLipid,
     lnpForm.lipidPka,
     lnpForm.npRatio,
   ]);
-
-  // Sliders with dynamic clamping: Ionizable + DSPC + PEG <= 95.0%
-  const handleIonizableChange = (val: number) => {
-    const maxAllowed = Number((95.0 - lnpForm.dspcHelper - lnpForm.pegLipid).toFixed(1));
-    const clamped = Math.max(35.0, Math.min(val, maxAllowed));
-    setLnpForm((prev) => ({ ...prev, ionizableLipid: clamped }));
-  };
-
-  const handleDspcChange = (val: number) => {
-    const maxAllowed = Number((95.0 - lnpForm.ionizableLipid - lnpForm.pegLipid).toFixed(1));
-    const clamped = Math.max(5.0, Math.min(val, maxAllowed));
-    setLnpForm((prev) => ({ ...prev, dspcHelper: clamped }));
-  };
-
-  const handlePegChange = (val: number) => {
-    const maxAllowed = Number((95.0 - lnpForm.ionizableLipid - lnpForm.dspcHelper).toFixed(1));
-    const clamped = Math.max(0.3, Math.min(val, maxAllowed));
-    setLnpForm((prev) => ({ ...prev, pegLipid: clamped }));
-  };
 
   const toggleAllStealth = () => {
     if (patientRelevantEpitopes.length === 0) return;
@@ -1108,146 +730,11 @@ ${editedProtein}${guideHeader}
     downloadGenScriptOrderSheet(guidesToExport, activePreset, !all);
   };
 
-  // Clinical & Research LNP Benchmark Presets
-  const CLINICAL_LNP_PRESETS = [
-    {
-      id: 'Onpattro',
-      name: 'Onpattro®',
-      lipidName: 'DLin-MC3-DMA',
-      target: 'Liver (78%)',
-      organ: 'Hepatic',
-      dotColor: '#5e946c',
-      formulation: {
-        ionizableLipid: 50.0,
-        dspcHelper: 10.0,
-        cholesterol: 38.5,
-        pegLipid: 1.5,
-        lipidPka: 6.44,
-        npRatio: 6.0,
-      },
-    },
-    {
-      id: 'Moderna',
-      name: 'Spikevax®',
-      lipidName: 'SM-102',
-      target: 'Liver / Muscle',
-      organ: 'Systemic',
-      dotColor: '#cfa052',
-      formulation: {
-        ionizableLipid: 50.0,
-        dspcHelper: 10.0,
-        cholesterol: 38.5,
-        pegLipid: 1.5,
-        lipidPka: 6.68,
-        npRatio: 6.0,
-      },
-    },
-    {
-      id: 'Comirnaty',
-      name: 'Comirnaty®',
-      lipidName: 'ALC-0315',
-      target: 'Liver / Spleen',
-      organ: 'Lymphoid',
-      dotColor: '#4d828f',
-      formulation: {
-        ionizableLipid: 46.3,
-        dspcHelper: 9.4,
-        cholesterol: 42.7,
-        pegLipid: 1.6,
-        lipidPka: 6.09,
-        npRatio: 6.0,
-      },
-    },
-    {
-      id: 'NTLA2001',
-      name: 'NTLA-2001',
-      lipidName: 'LP-01 (CRISPR)',
-      target: 'Liver (82%)',
-      organ: 'In Vivo Cas9',
-      dotColor: '#9e6778',
-      formulation: {
-        ionizableLipid: 50.0,
-        dspcHelper: 10.0,
-        cholesterol: 38.5,
-        pegLipid: 1.5,
-        lipidPka: 6.50,
-        npRatio: 6.0,
-      },
-    },
-    {
-      id: 'LungSORT',
-      name: 'Lung-SORT',
-      lipidName: '50% DOTAP',
-      target: 'Lungs (65%)',
-      organ: 'Endothelial',
-      dotColor: '#528796',
-      formulation: {
-        ionizableLipid: 55.0,
-        dspcHelper: 12.0,
-        cholesterol: 31.5,
-        pegLipid: 1.5,
-        lipidPka: 7.10,
-        npRatio: 8.0,
-      },
-    },
-    {
-      id: 'SpleenSORT',
-      name: 'Spleen-SORT',
-      lipidName: '18PA (Anionic)',
-      target: 'Spleen (60%)',
-      organ: 'Splenic B/T',
-      dotColor: '#bd5142',
-      formulation: {
-        ionizableLipid: 48.0,
-        dspcHelper: 10.0,
-        cholesterol: 40.5,
-        pegLipid: 1.5,
-        lipidPka: 5.85,
-        npRatio: 5.0,
-      },
-    },
-  ] as const;
-
-  type ClinicalLnpPresetId = (typeof CLINICAL_LNP_PRESETS)[number]['id'];
-
-  const applyClinicalLnp = (id: ClinicalLnpPresetId) => {
-    const preset = CLINICAL_LNP_PRESETS.find((p) => p.id === id);
-    if (preset) {
-      setLnpForm({ ...preset.formulation });
-    }
-  };
-
-  const activeClinicalPreset = useMemo(() => {
-    return CLINICAL_LNP_PRESETS.find(
-      (p) =>
-        Math.abs(p.formulation.ionizableLipid - lnpForm.ionizableLipid) < 0.2 &&
-        Math.abs(p.formulation.dspcHelper - lnpForm.dspcHelper) < 0.2 &&
-        Math.abs(p.formulation.pegLipid - lnpForm.pegLipid) < 0.2 &&
-        Math.abs(p.formulation.lipidPka - lnpForm.lipidPka) < 0.08
-    );
-  }, [lnpForm]);
-
-  const [copiedFormulation, setCopiedFormulation] = useState<boolean>(false);
-  const handleCopyFormulation = () => {
-    const recipe = {
-      preset: activeClinicalPreset?.name ?? 'Custom LNP Formulation',
-      ionizableLipid_molPct: lnpForm.ionizableLipid,
-      dspcHelper_molPct: lnpForm.dspcHelper,
-      cholesterol_molPct: effectiveCholesterol,
-      pegLipid_molPct: lnpForm.pegLipid,
-      apparent_pKa: lnpForm.lipidPka,
-      np_charge_ratio: lnpForm.npRatio,
-      hydrodynamic_diameter_nm: biophysics.diameterNm,
-      pdi: biophysics.pdi,
-      zeta_potential_mv: biophysics.zetaPotentialMv,
-    };
-    navigator.clipboard
-      .writeText(JSON.stringify(recipe, null, 2))
-      .then(() => {
-        setCopiedFormulation(true);
-        setTimeout(() => setCopiedFormulation(false), 2000);
-      })
-      .catch((err) => console.warn('Failed to copy formulation:', err));
+  // The inline calculator lives on the overview tab. From any other tab the header button opens the Batch tab instead.
+  const batchCalcOpen = activeTab === 'batch' || (activeTab === 'overview' && showBatchCalc);
+  const openBatchCalculator = () => {
+    if (activeTab === 'overview') setShowBatchCalc((open) => !open);
+    else setActiveTab('batch');
   };
 
   // Export regulatory pre-IND summary in Markdown format
@@ -1362,6 +849,8 @@ ${epitopeRows}
     a.download = `pre_ind_evaluation_${activePreset.id.toLowerCase()}.md`;
     a.click();
     URL.revokeObjectURL(url);
+    setReportSaved(true);
+    setTimeout(() => setReportSaved(false), 2000);
   };
 
   const getVerdictStatusColor = (verdict: GuideCandidate['verdict']) => {
@@ -1403,7 +892,7 @@ ${epitopeRows}
             <span className="font-display font-bold text-sm tracking-tight text-[#e8dfd1]">
               NanoCRISPR-3D
             </span>
-            <span className="text-[#70675c] text-xs">/</span>
+            <span className="text-[#70675c] text-xs hidden sm:inline">/</span>
             <span className="text-[#a69b8d] text-xs hidden sm:inline">
               Base editor &amp; lipid nanoparticle evaluation workbench
             </span>
@@ -1426,7 +915,7 @@ ${epitopeRows}
                   setIsCustomMode(false);
                   setEditorOverride(null);
                   setPamOverride(null);
-                  setSelectedGuideIdx(0);
+                  setSelectedGuideId(null);
                 }}
                 style={{
                   backgroundColor:
@@ -1448,7 +937,7 @@ ${epitopeRows}
             <button
               onClick={() => {
                 setIsCustomMode(true);
-                setSelectedGuideIdx(0);
+                setSelectedGuideId(null);
               }}
               style={{
                 backgroundColor: isCustomMode ? tokens.colors.surfaceSelected : 'transparent',
@@ -1499,104 +988,71 @@ ${epitopeRows}
           </div>
         </div>
 
-        {/* Right Action Bar */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Interactive Web Tour for Newcomers */}
-          <button
+        {/* Right action bar: tour, calculator and dossier, files, link */}
+        <div className="flex items-center gap-x-4 gap-y-2 flex-wrap">
+          <ToolButton
+            icon={<Compass />}
             onClick={() => startClinicalWalkthrough('HBB')}
-            className="px-2.5 py-1 text-xs font-semibold rounded-[3px] bg-[#b88644] hover:bg-[#c99552] text-white flex items-center gap-1.5 transition cursor-pointer shadow-sm"
-            title="Launch interactive step-by-step clinical walkthrough for newcomers"
+            title="Start the step-by-step clinical walkthrough (sickle cell HBB case)"
           >
-            <Compass className="w-3.5 h-3.5" />
-            <span>Clinical Tour (Newcomers)</span>
-          </button>
+            Clinical tour
+          </ToolButton>
 
-          {/* Share Config Link Button */}
-          <button
+          <div className="flex items-center gap-1.5" role="group" aria-label="Calculator and dossier">
+            <ToolButton
+              pressed={batchCalcOpen}
+              onClick={openBatchCalculator}
+              title={
+                activeTab === 'overview'
+                  ? 'Show or hide the wet-lab batch mass calculator'
+                  : 'Open the Batch tab with the wet-lab batch mass calculator'
+              }
+            >
+              Batch mass calculator
+            </ToolButton>
+            <ToolButton
+              icon={<FileText />}
+              onClick={() => setIsDossierModalOpen(true)}
+              title="Open the pre-IND regulatory technical dossier (ICH M4Q / FDA eCTD Module 3 CMC)"
+            >
+              Pre-IND dossier
+            </ToolButton>
+          </div>
+
+          <div className="flex items-center gap-1.5" role="group" aria-label="Export">
+            <span className="ctl-label" aria-hidden="true">
+              Export
+            </span>
+            <ToolButton
+              icon={fastaSaved ? <Check /> : <Download />}
+              done={fastaSaved}
+              onClick={handleExportTopFasta}
+              title="Download a multi-record FASTA (.fasta): wild-type and edited CDS, both polypeptides and the protospacer"
+            >
+              {fastaSaved ? 'FASTA saved' : 'FASTA'}
+            </ToolButton>
+            <ToolButton
+              icon={reportSaved ? <Check /> : <Download />}
+              done={reportSaved}
+              onClick={downloadDraDossier}
+              title="Download the pre-IND CMC and preclinical evaluation report as Markdown (.md)"
+            >
+              {reportSaved ? 'Report saved' : 'Pre-IND report (.md)'}
+            </ToolButton>
+          </div>
+
+          <ToolButton
+            icon={shareCopied ? <Check /> : <Share2 />}
+            done={shareCopied}
             onClick={handleShareConfig}
-            style={{
-              backgroundColor: shareCopied
-                ? tokens.colors.status.successSubtle
-                : tokens.colors.surfaceRaised,
-              borderColor: shareCopied ? tokens.colors.status.success : tokens.colors.border,
-              borderRadius: tokens.radius,
-              color: shareCopied ? tokens.colors.status.success : tokens.colors.textPrimary,
-            }}
-            className="px-2.5 py-1 text-xs font-medium border hover:bg-[#2a2621] hover:border-[#4d828f] transition cursor-pointer flex items-center gap-1.5"
-            title="Copy shareable configuration URL with active presets and formulation"
+            title={
+              isCustomMode
+                ? 'Copy a link to the editor, PAM, guide and formulation. A custom sequence is not stored in the link.'
+                : 'Copy a link that restores this target, editor, PAM, guide and formulation'
+            }
           >
-            {shareCopied ? (
-              <Check className="w-3 h-3 text-[#5e946c]" />
-            ) : (
-              <Share2 className="w-3 h-3 text-[#4d828f]" />
-            )}
-            <span>{shareCopied ? 'Link copied' : 'Share config'}</span>
-          </button>
-
-          {/* Export Multi-Record FASTA Button */}
-          <button
-            onClick={handleExportTopFasta}
-            style={{
-              backgroundColor: fastaSaved
-                ? tokens.colors.status.successSubtle
-                : tokens.colors.surfaceRaised,
-              borderColor: fastaSaved ? tokens.colors.status.success : tokens.colors.border,
-              borderRadius: tokens.radius,
-              color: fastaSaved ? tokens.colors.status.success : tokens.colors.textPrimary,
-            }}
-            className="px-2.5 py-1 text-xs font-medium border hover:bg-[#2a2621] hover:border-[#4d828f] transition cursor-pointer flex items-center gap-1.5"
-            title="Download multi-record FASTA with WT/edited CDS, polypeptides, and protospacer"
-          >
-            {fastaSaved ? (
-              <Check className="w-3 h-3 text-[#5e946c]" />
-            ) : (
-              <Download className="w-3 h-3 text-[#4d828f]" />
-            )}
-            <span>{fastaSaved ? 'Saved FASTA' : 'Export FASTA (.fasta)'}</span>
-          </button>
-
-          <button
-            onClick={() => setShowBatchCalc(!showBatchCalc)}
-            style={{
-              backgroundColor: showBatchCalc
-                ? tokens.colors.accentSubdued
-                : tokens.colors.surfaceRaised,
-              borderColor: showBatchCalc ? tokens.colors.accentBorder : tokens.colors.border,
-              borderRadius: tokens.radius,
-              color: showBatchCalc ? tokens.colors.textPrimary : tokens.colors.textSecondary,
-            }}
-            className="px-2.5 py-1 text-xs font-medium border hover:text-[#e8dfd1] hover:border-[#4d828f] transition cursor-pointer"
-          >
-            {showBatchCalc ? 'Hide mass calculator' : 'Batch mass calculator'}
-          </button>
-
-          <button
-            onClick={downloadDraDossier}
-            style={{
-              backgroundColor: tokens.colors.surfaceRaised,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-              color: tokens.colors.textPrimary,
-            }}
-            className="px-3 py-1 text-xs font-medium border hover:bg-[#2a2621] hover:border-[#4d828f] transition cursor-pointer"
-          >
-            Export pre-IND report (.md)
-          </button>
-
-          <button
-            onClick={() => setIsDossierModalOpen(true)}
-            style={{
-              backgroundColor: '#0f766e',
-              borderColor: '#0d645e',
-              borderRadius: tokens.radius,
-              color: '#ffffff',
-            }}
-            className="px-3 py-1 text-xs font-semibold border hover:bg-[#115e59] transition cursor-pointer flex items-center gap-1.5 shadow-xs"
-            title="Open Pre-IND Regulatory Technical Dossier (ICH M4Q / FDA eCTD Module 3 CMC)"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>Pre-IND Dossier (Module 3)</span>
-          </button>
+            {shareCopied ? 'Link copied' : 'Share config'}
+          </ToolButton>
         </div>
       </header>
 
@@ -1716,6 +1172,7 @@ ${epitopeRows}
                   onClick={() => {
                     setSelectedPresetId('HBB');
                     setIsCustomMode(false);
+                    setSelectedGuideId(null);
                     setActiveTab('crispr');
                   }}
                   className="px-2.5 py-1 text-[11px] font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#e8dfd1] hover:text-[#d4a359] transition cursor-pointer flex items-center gap-1"
@@ -1726,6 +1183,7 @@ ${epitopeRows}
                   onClick={() => {
                     setSelectedPresetId('TTR');
                     setIsCustomMode(false);
+                    setSelectedGuideId(null);
                     setActiveTab('lnp');
                   }}
                   className="px-2.5 py-1 text-[11px] font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#e8dfd1] hover:text-[#d4a359] transition cursor-pointer flex items-center gap-1"
@@ -2118,7 +1576,7 @@ ${epitopeRows}
                       if (isCustomMode) {
                         setCustomPreset((prev) => ({ ...prev, editorType: val }));
                       }
-                      setSelectedGuideIdx(0);
+                      setSelectedGuideId(null);
                     }}
                     style={{
                       backgroundColor: tokens.colors.canvas,
@@ -2146,7 +1604,7 @@ ${epitopeRows}
                       if (isCustomMode) {
                         setCustomPreset((prev) => ({ ...prev, pamVariant: val }));
                       }
-                      setSelectedGuideIdx(0);
+                      setSelectedGuideId(null);
                     }}
                     style={{
                       backgroundColor: tokens.colors.canvas,
@@ -2194,12 +1652,17 @@ ${epitopeRows}
           {/* CRISPR Base Editing Pipeline (Sequence Viewer, Protospacers & Bystanders) */}
           {(activeTab === 'overview' || activeTab === 'crispr') && (
             <>
-              {/* Interactive Multi-Track Monospace Sequence Visualizer */}
-          <GenomicSequenceViewer
-            preset={activePreset}
-            selectedGuide={selectedGuide}
-            wildTypeProtein={wildTypeProtein}
-            onSelectGuideIdx={setSelectedGuideIdx}
+          {/* Sequence workbench: ruler, codons, edit outcome, guides and variants on one axis */}
+          <SequenceWorkbench
+            title={`${activePreset.symbol} coding sequence`}
+            sequence={activePreset.sequence}
+            editor={workbenchEditor}
+            guides={workbenchGuides}
+            snps={workbenchSnps}
+            targetPos={activePreset.mutationIndex}
+            selectedGuideId={selectedGuide?.id ?? null}
+            onSelectGuide={setSelectedGuideId}
+            audit="summary"
           />
 
           {/* Dual-Strand Protospacer Candidate Guides Table */}
@@ -2314,7 +1777,7 @@ ${epitopeRows}
                     return (
                       <tr
                         key={guide.id}
-                        onClick={() => setSelectedGuideIdx(idx)}
+                        onClick={() => setSelectedGuideId(guide.id)}
                         style={{
                           backgroundColor: isSelected
                             ? tokens.colors.surfaceSelected
@@ -2827,415 +2290,11 @@ ${epitopeRows}
               ]}
             />
           )}
-          {/* 3D Nanoparticle Cross-Section Viewport */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3 flex flex-col gap-2"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                Nanoparticle structural cutaway
-              </h2>
-              <span className="text-[11px] text-[#70675c]">
-                Interactive WebGL instanced model
-              </span>
-            </div>
-            <NanoViewport3D formulation={activeFormulation} biophysics={biophysics} />
-          </div>
+          {/* 3D nanoparticle cutaway: owns its title, toolbar, live readout and HUD */}
+          <NanoViewport3D formulation={activeFormulation} biophysics={biophysics} />
 
-          {/* Formulation Controls with 4-Component Auto-Balancing */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3.5 flex flex-col gap-3.5"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Lipid formulation parameters &amp; organ tropism
-                </h2>
-                {activeClinicalPreset ? (
-                  <span className="px-2 py-0.5 rounded-[2px] bg-[#5e946c]/20 border border-[#5e946c]/50 text-[#73a880] text-[10px] font-mono font-semibold flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#5e946c]" />
-                    {activeClinicalPreset.name} Benchmark
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-[2px] bg-[#211e1a] border border-[#332e27] text-[#a69b8d] text-[10px] font-mono">
-                    Custom Formulation
-                  </span>
-                )}
-              </div>
-
-              {/* Formulation Action Buttons */}
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleCopyFormulation}
-                  className="px-2 py-1 text-[10px] rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] transition cursor-pointer flex items-center gap-1"
-                  title="Copy formulation stoichiometry and pKa to clipboard as JSON"
-                >
-                  {copiedFormulation ? (
-                    <Check className="w-2.5 h-2.5 text-[#5e946c]" />
-                  ) : (
-                    <Copy className="w-2.5 h-2.5 text-[#4d828f]" />
-                  )}
-                  <span>{copiedFormulation ? 'Copied' : 'Copy Recipe'}</span>
-                </button>
-
-                <button
-                  onClick={() => applyClinicalLnp('Onpattro')}
-                  className="px-2 py-1 text-[10px] rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#70675c] hover:text-[#e8dfd1] transition cursor-pointer"
-                  title="Reset formulation to clinical benchmark (Onpattro)"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-
-            {/* 6 Clinical & Research Benchmark Formulation Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5">
-              {CLINICAL_LNP_PRESETS.map((preset) => {
-                const isActive = activeClinicalPreset?.id === preset.id;
-                return (
-                  <button
-                    key={preset.id}
-                    onClick={() => applyClinicalLnp(preset.id)}
-                    style={{
-                      borderColor: isActive ? preset.dotColor : tokens.colors.border,
-                      backgroundColor: isActive ? `${preset.dotColor}18` : tokens.colors.surfaceRaised,
-                    }}
-                    className={`p-2 rounded-[3px] border text-left flex flex-col justify-between gap-1 transition cursor-pointer hover:bg-[#2a2621] ${
-                      isActive ? 'ring-1 shadow-xs' : ''
-                    }`}
-                    style-ringcolor={preset.dotColor}
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className={`font-semibold text-[11px] ${isActive ? 'text-[#e8dfd1]' : 'text-[#c7bcb0]'}`}>
-                        {preset.name}
-                      </span>
-                      <span
-                        style={{ backgroundColor: preset.dotColor }}
-                        className="w-1.5 h-1.5 rounded-full shrink-0"
-                      />
-                    </div>
-                    <div className="text-[9px] text-[#a69b8d] font-mono leading-tight truncate">
-                      {preset.lipidName}
-                    </div>
-                    <div className="flex items-center justify-between text-[8px] font-mono text-[#70675c] pt-0.5 border-t border-[#332e27]/50">
-                      <span>{preset.target}</span>
-                      <span className="text-[#98c2cc]">{preset.organ}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* 4-Component Stacked Stoichiometry Bar */}
-            <div className="flex flex-col gap-1.5 p-2 rounded-[3px] bg-[#12110f] border border-[#24201b]">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-[#a69b8d] font-medium">
-                  Molar Stoichiometry Bar (100.0% Guaranteed)
-                </span>
-                <span className="font-mono text-[#e8dfd1] font-semibold">
-                  Cholesterol: {effectiveCholesterol.toFixed(1)} mol%
-                </span>
-              </div>
-
-              {/* Stacked Continuous Segment Bar */}
-              <div className="w-full h-3.5 rounded-[2px] overflow-hidden flex border border-[#332e27] bg-[#181613]">
-                <div
-                  style={{
-                    width: `${lnpForm.ionizableLipid}%`,
-                    backgroundColor: tokens.colors.pigments.ochre,
-                  }}
-                  className="h-full transition-all"
-                  title={`Ionizable lipid: ${lnpForm.ionizableLipid.toFixed(1)} mol%`}
-                />
-                <div
-                  style={{
-                    width: `${lnpForm.dspcHelper}%`,
-                    backgroundColor: tokens.colors.pigments.ivory,
-                  }}
-                  className="h-full transition-all"
-                  title={`DSPC helper lipid: ${lnpForm.dspcHelper.toFixed(1)} mol%`}
-                />
-                <div
-                  style={{
-                    width: `${effectiveCholesterol}%`,
-                    backgroundColor: tokens.colors.pigments.terracotta,
-                  }}
-                  className="h-full transition-all"
-                  title={`Cholesterol sterol: ${effectiveCholesterol.toFixed(1)} mol%`}
-                />
-                <div
-                  style={{
-                    width: `${lnpForm.pegLipid}%`,
-                    backgroundColor: tokens.colors.pigments.petrol,
-                  }}
-                  className="h-full transition-all"
-                  title={`PEG-lipid corona: ${lnpForm.pegLipid.toFixed(1)} mol%`}
-                />
-              </div>
-
-              {/* Legend with Color Swatches */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-0.5 text-[10px] font-mono">
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-[2px] bg-[#181613] border border-[#24201b]">
-                  <span
-                    style={{ backgroundColor: tokens.colors.pigments.ochre }}
-                    className="w-2 h-2 rounded-[1px] shrink-0"
-                  />
-                  <span className="text-[#a69b8d] truncate">Ionizable:</span>
-                  <span className="text-[#e8dfd1] font-semibold ml-auto">
-                    {lnpForm.ionizableLipid.toFixed(1)}%
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-[2px] bg-[#181613] border border-[#24201b]">
-                  <span
-                    style={{ backgroundColor: tokens.colors.pigments.ivory }}
-                    className="w-2 h-2 rounded-[1px] shrink-0"
-                  />
-                  <span className="text-[#a69b8d] truncate">DSPC:</span>
-                  <span className="text-[#e8dfd1] font-semibold ml-auto">
-                    {lnpForm.dspcHelper.toFixed(1)}%
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-[2px] bg-[#181613] border border-[#24201b]">
-                  <span
-                    style={{ backgroundColor: tokens.colors.pigments.terracotta }}
-                    className="w-2 h-2 rounded-[1px] shrink-0"
-                  />
-                  <span className="text-[#a69b8d] truncate">Chol (Bal):</span>
-                  <span className="text-[#e8dfd1] font-semibold ml-auto">
-                    {effectiveCholesterol.toFixed(1)}%
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-[2px] bg-[#181613] border border-[#24201b]">
-                  <span
-                    style={{ backgroundColor: tokens.colors.pigments.petrol }}
-                    className="w-2 h-2 rounded-[1px] shrink-0"
-                  />
-                  <span className="text-[#a69b8d] truncate">PEG-Lipid:</span>
-                  <span className="text-[#e8dfd1] font-semibold ml-auto">
-                    {lnpForm.pegLipid.toFixed(1)}%
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* 4-Component Auto-Balancing Sliders with Stepper Nudge Buttons */}
-            <div className="flex flex-col gap-3 text-xs">
-              {/* 1. Ionizable Lipid */}
-              <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center">
-                  <span className="text-[#a69b8d] font-medium">Ionizable lipid molar ratio</span>
-                  <span className="font-mono text-[#e8dfd1] font-semibold">
-                    {lnpForm.ionizableLipid.toFixed(1)} mol%
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleIonizableChange(lnpForm.ionizableLipid - 0.5)}
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Decrease by 0.5 mol%"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="range"
-                    min="35.0"
-                    max="65.0"
-                    step="0.5"
-                    value={lnpForm.ionizableLipid}
-                    onChange={(e) => handleIonizableChange(parseFloat(e.target.value))}
-                    className="flex-1 cursor-pointer"
-                  />
-                  <button
-                    onClick={() => handleIonizableChange(lnpForm.ionizableLipid + 0.5)}
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Increase by 0.5 mol%"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* 2. DSPC Helper */}
-              <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center">
-                  <span className="text-[#a69b8d] font-medium">Helper lipid (DSPC) molar ratio</span>
-                  <span className="font-mono text-[#e8dfd1] font-semibold">
-                    {lnpForm.dspcHelper.toFixed(1)} mol%
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleDspcChange(lnpForm.dspcHelper - 0.5)}
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Decrease by 0.5 mol%"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="range"
-                    min="5.0"
-                    max="20.0"
-                    step="0.5"
-                    value={lnpForm.dspcHelper}
-                    onChange={(e) => handleDspcChange(parseFloat(e.target.value))}
-                    className="flex-1 cursor-pointer"
-                  />
-                  <button
-                    onClick={() => handleDspcChange(lnpForm.dspcHelper + 0.5)}
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Increase by 0.5 mol%"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* 3. PEG Lipid */}
-              <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center">
-                  <span className="text-[#a69b8d] font-medium">PEG-lipid molar ratio</span>
-                  <span className="font-mono text-[#e8dfd1] font-semibold">
-                    {lnpForm.pegLipid.toFixed(1)} mol%
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handlePegChange(lnpForm.pegLipid - 0.1)}
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Decrease by 0.1 mol%"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="range"
-                    min="0.3"
-                    max="6.0"
-                    step="0.1"
-                    value={lnpForm.pegLipid}
-                    onChange={(e) => handlePegChange(parseFloat(e.target.value))}
-                    className="flex-1 cursor-pointer"
-                  />
-                  <button
-                    onClick={() => handlePegChange(lnpForm.pegLipid + 0.1)}
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Increase by 0.1 mol%"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* 4. Ionizable pKa */}
-              <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center">
-                  <span className="text-[#a69b8d] font-medium">Ionizable lipid apparent pKa</span>
-                  <span className="font-mono text-[#e8dfd1] font-semibold">
-                    {lnpForm.lipidPka.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() =>
-                      setLnpForm((prev) => ({
-                        ...prev,
-                        lipidPka: Math.max(5.4, Number((prev.lipidPka - 0.05).toFixed(2))),
-                      }))
-                    }
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Decrease by 0.05"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="range"
-                    min="5.4"
-                    max="7.4"
-                    step="0.05"
-                    value={lnpForm.lipidPka}
-                    onChange={(e) =>
-                      setLnpForm({ ...lnpForm, lipidPka: parseFloat(e.target.value) })
-                    }
-                    className="flex-1 cursor-pointer"
-                  />
-                  <button
-                    onClick={() =>
-                      setLnpForm((prev) => ({
-                        ...prev,
-                        lipidPka: Math.min(7.4, Number((prev.lipidPka + 0.05).toFixed(2))),
-                      }))
-                    }
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Increase by 0.05"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-
-              {/* 5. N/P Charge Ratio */}
-              <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center">
-                  <span className="text-[#a69b8d] font-medium">Amine-to-phosphate (N/P) charge ratio</span>
-                  <span className="font-mono text-[#e8dfd1] font-semibold">
-                    {lnpForm.npRatio.toFixed(1)}:1
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() =>
-                      setLnpForm((prev) => ({
-                        ...prev,
-                        npRatio: Math.max(3.0, Number((prev.npRatio - 0.5).toFixed(1))),
-                      }))
-                    }
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Decrease by 0.5"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="range"
-                    min="3.0"
-                    max="10.0"
-                    step="0.5"
-                    value={lnpForm.npRatio}
-                    onChange={(e) =>
-                      setLnpForm({ ...lnpForm, npRatio: parseFloat(e.target.value) })
-                    }
-                    className="flex-1 cursor-pointer"
-                  />
-                  <button
-                    onClick={() =>
-                      setLnpForm((prev) => ({
-                        ...prev,
-                        npRatio: Math.min(10.0, Number((prev.npRatio + 0.5).toFixed(1))),
-                      }))
-                    }
-                    className="w-6 h-6 rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center justify-center font-mono text-xs transition cursor-pointer"
-                    title="Increase by 0.5"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Interactive SVG Henderson-Hasselbalch & H_II Phase Curve */}
-            <HendersonHasselbalchCurve lipidPka={lnpForm.lipidPka} />
-          </div>
+          {/* Benchmarks, composition and assembly controls, ionization curve */}
+          <LnpFormulationPanel form={lnpForm} onChange={setLnpForm} biophysics={biophysics} />
 
           {/* Wet-Lab Batch Preparation Mass Calculator (Collapsible / Toggleable in Overview) */}
           {activeTab === 'overview' && showBatchCalc && (
@@ -3989,15 +3048,18 @@ ${epitopeRows}
           setTourCase(caseId);
           setSelectedPresetId(caseId);
           setIsCustomMode(false);
+          setSelectedGuideId(null);
         }}
         currentTab={activeTab}
         onNavigateTab={(tab) => setActiveTab(tab)}
         onApplyPreset={(presetId) => {
           setSelectedPresetId(presetId);
           setIsCustomMode(false);
+          setSelectedGuideId(null);
         }}
-        onSelectGuideIndex={(idx) => setSelectedGuideIdx(idx)}
-        onApplyFormulation={(form) => setLnpForm(form)}
+        // Index 0 is the top-ranked guide, which is what an unset selection already shows.
+        onSelectGuideIndex={(idx) => setSelectedGuideId(idx === 0 ? null : (processedGuides[idx]?.id ?? null))}
+        onApplyFormulation={(form) => setLnpForm((prev) => sanitizeLnpFormulation(form, prev))}
         onToggleHlaAllele={togglePatientHlaAllele}
         onToggleStealthMutation={toggleSingleEpitope}
         onSetBatchParameters={(volMl, concMgMl) => {

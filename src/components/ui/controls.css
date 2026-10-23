@@ -1,0 +1,193 @@
+/* src/components/ui/controls.css
+ *
+ * One set of small controls for the instrument-style panels (viewport toolbar, formulation, header).
+ * Rules this file keeps so the panels read as one instrument:
+ *   - every button is 24 px tall, 11 px text, 1 px hairline border;
+ *   - "selected" is always the same thing: the raised espresso fill plus a 2 px petrol underline;
+ *   - colour is used for state only (selected = petrol, confirmed = verdigris), never as decoration;
+ *   - small labels are upper-case 10 px in the secondary text colour (the muted colour is too faint at that size).
+ * Colours come from the :root variables in src/index.css.
+ */
+
+.ctl-btn,
+.ctl-seg__btn,
+.ctl-nudge {
+  --ctl-h: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--ctl-h);
+  padding: 0 9px;
+  font: 500 11px/1 var(--font-sans, system-ui, sans-serif);
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--color-text-secondary, #a69b8d);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.ctl-btn:hover,
+.ctl-seg__btn:hover,
+.ctl-nudge:hover:not(:disabled) {
+  background: var(--color-surface-hover, #2a2621);
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+.ctl-btn:focus-visible,
+.ctl-seg__btn:focus-visible,
+.ctl-nudge:focus-visible {
+  outline: 2px solid var(--color-accent, #4d828f);
+  outline-offset: 1px;
+}
+
+.ctl-btn:disabled,
+.ctl-nudge:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ctl-btn svg,
+.ctl-seg__btn svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+/* Standalone button */
+.ctl-btn {
+  background: var(--color-surface-raised, #211e1a);
+  border-color: var(--color-border, #332e27);
+  border-radius: var(--radius-default, 3px);
+}
+
+.ctl-btn--icon {
+  width: 24px;
+  padding: 0;
+}
+
+/* Selected / pressed */
+.ctl-btn[aria-pressed='true'],
+.ctl-seg__btn[aria-pressed='true'] {
+  background: var(--color-surface-selected, #2c251d);
+  color: var(--color-text-primary, #e8dfd1);
+  box-shadow: inset 0 -2px 0 var(--color-accent, #4d828f);
+}
+
+/* Brief confirmation after copy / export */
+.ctl-btn[data-done] {
+  color: var(--color-status-success, #5e946c);
+  border-color: color-mix(in srgb, var(--color-status-success, #5e946c) 55%, transparent);
+  background: color-mix(in srgb, var(--color-status-success, #5e946c) 12%, var(--color-surface-raised, #211e1a));
+}
+
+/* Segmented control: one hairline box, options divided by 1 px rules */
+.ctl-seg {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid var(--color-border, #332e27);
+  border-radius: var(--radius-default, 3px);
+  overflow: hidden;
+  background: var(--color-surface, #181613);
+}
+
+.ctl-seg__btn {
+  border-radius: 0;
+  border: 0;
+  border-left: 1px solid var(--color-border-muted, #24201b);
+}
+
+.ctl-seg__btn:first-child {
+  border-left: 0;
+}
+
+/* Label over a control */
+.ctl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.ctl-label {
+  font: 600 10px/1 var(--font-sans, system-ui, sans-serif);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+/* Vertical hairline between button clusters */
+.ctl-sep {
+  align-self: stretch;
+  width: 1px;
+  min-height: 16px;
+  background: var(--color-border, #332e27);
+}
+
+/* Slider row: label + value on top, [-] track [+] below */
+.ctl-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ctl-slider__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.ctl-slider__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-text-secondary, #a69b8d);
+  font-weight: 500;
+}
+
+.ctl-slider__value {
+  flex: none;
+  font: 600 11px/1.3 var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+.ctl-slider__track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ctl-slider__track input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.ctl-nudge {
+  --ctl-h: 22px;
+  width: 22px;
+  padding: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  background: var(--color-surface-raised, #211e1a);
+  border-color: var(--color-border, #332e27);
+  border-radius: 2px;
+}
+
+/* Colour key swatch, same colour as the segment it names */
+.ctl-swatch {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+}

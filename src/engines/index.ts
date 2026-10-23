@@ -12,6 +12,8 @@ export * from './crispr/orderSheetGenerator';
 
 // Nanotechnology & CMC
 export * from './nanotech/lnpSimulator';
+export * from './nanotech/formulationLimits';
+export * from './nanotech/benchmarks';
 export * from './nanotech/batchCalculator';
 
 // ImmunoShield HLA Engineering

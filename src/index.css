@@ -16,6 +16,7 @@
   --color-surface-subtle: #151310;
   --color-surface-raised: #211e1a;
   --color-surface-hover: #2a2621;
+  --color-surface-selected: #2c251d;
   --color-border: #332e27;
   --color-border-muted: #24201b;
   --color-text-primary: #e8dfd1;
@@ -23,9 +24,16 @@
   --color-text-muted: #70675c;
   --color-accent: #4d828f;
   --color-accent-hover: #5e96a3;
+  --color-accent-subdued: rgba(77, 130, 143, 0.16);
   --color-status-success: #5e946c;
   --color-status-warning: #c98a3b;
   --color-status-danger: #bd5142;
+
+  /* Nucleotide pigments, same values as getBaseColorClass in App.tsx */
+  --color-base-a: #73a880;
+  --color-base-c: #6699a8;
+  --color-base-g: #d4a359;
+  --color-base-t: #cc6b5a;
   --radius-default: 3px;
 }
 
