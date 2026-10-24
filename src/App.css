@@ -1,8 +1,17 @@
 /* src/App.css */
-/* Clean scientific workstation utility styles (Vite starter boilerplate purged) */
+/* Precision Vintage Lab Instrument Workbench Architecture */
 
 .workstation-panel {
-  background-color: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background-color: var(--bg-panel-surface);
+  border: 1px solid var(--border-chassis);
   border-radius: var(--radius-default);
+}
+
+/* Graticule pattern for technical viewports */
+.bg-graticule {
+  background-color: var(--bg-viewport-recessed);
+  background-image: 
+    linear-gradient(to right, var(--grid-graticule) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-graticule) 1px, transparent 1px);
+  background-size: 20px 20px;
 }

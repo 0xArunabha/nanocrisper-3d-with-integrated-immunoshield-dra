@@ -200,8 +200,8 @@ const ProtospacerCandidateTable: React.FC<{
                 <td className="p-1.5 font-bold">{g.CompositeScore} / 100</td>
                 <td className="p-1.5">{g.bystanders.length > 0 ? `${g.bystanders.length} bystander` : 'None'}</td>
                 <td className="p-1.5">
-                  <span className={`px-1.5 py-0.5 rounded-[2px] text-[8.5px] font-bold text-white ${
-                    isLead ? 'bg-[#047857]' : g.verdict === 'Optimal Clinical Guide' ? 'bg-[#0f766e]' : g.verdict === 'High Risk (Bystander/SNP)' ? 'bg-[#e11d48]' : 'bg-[#b45309]'
+                  <span className={`px-2 py-0.5 rounded-[2px] text-[9px] font-bold text-white shadow-xs ${
+                    isLead ? 'bg-[#047857]' : g.verdict === 'Optimal Clinical Guide' ? 'bg-[#059669]' : g.verdict === 'High Risk (Bystander/SNP)' ? 'bg-[#dc2626]' : 'bg-[#d97706]'
                   }`}>
                     {isLead ? 'Selected Clinical Lead' : g.verdict}
                   </span>
@@ -778,7 +778,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                 Regulatory Executive Summary &amp; Cross-Domain CMC Matrix
               </h3>
               <p>
-                This dossier establishes the CMC control strategy, release specifications, and nonclinical biophysical rationale for an in vivo lipid nanoparticle (LNP)-encapsulated base editor drug product targeting <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.name} ({preset.symbol})</strong>. The molecular mechanism utilizes <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.editorType}</strong> to execute precision base transitions without generating double-strand DNA breaks (DSBs). The delivery system employs an ionizable lipid formulation engineered with an Israelachvili Critical Packing Parameter (<strong className="font-mono-dossier">CPP &ge; 1.45</strong>) triggering endosomal membrane destabilization, paired with an ImmunoShield-DRA Cas9 core de-immunized against high-frequency South Asian HLA Class I/II alleles.
+                This dossier establishes the CMC control strategy, release specifications, and nonclinical biophysical rationale for an in vivo lipid nanoparticle (LNP)-encapsulated base editor drug product targeting <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.name} ({preset.symbol})</strong>. The molecular mechanism utilizes <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.editorType}</strong> to execute precision base transitions without generating double-strand DNA breaks (DSBs). The delivery system employs an ionizable lipid formulation modeled via an empirical surrogate biophysical framework with an Israelachvili Critical Packing Parameter (<strong className="font-mono-dossier">CPP &ge; 1.45</strong>) triggering endosomal membrane destabilization, paired with an ImmunoShield-DRA Cas9 core de-immunized against high-frequency South Asian HLA Class I/II alleles.
               </p>
               <div className={`mt-2 text-[10px] font-mono-dossier ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
                 Clinical Note: {preset.clinicalNote}
@@ -1205,7 +1205,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   <span className="text-[#0f766e] font-bold">3.2.P.2</span> Pharmaceutical Development &amp; Biophysical Chemistry (CPP &amp; Polymer Brush)
                 </h3>
                 <p className={`text-[10.5px] leading-relaxed ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
-                  LNP self-assembly and endosomal escape kinetics are dictated by the Israelachvili Critical Packing Parameter (<code className="font-mono-dossier">CPP = v / (a0 &middot; lc)</code>) and De Gennes polymer brush scaling (<code className="font-mono-dossier">Rf / D</code>). At physiological pH 7.4, LNPs maintain a neutral stealth lamellar envelope (<code className="font-mono-dossier">CPP &approx; 0.95</code>) to minimize systemic toxicity. Upon endosomal acidification (pH 5.5), tertiary amine protonation drives cone-shaped lipid packing (<code className="font-mono-dossier">CPP &ge; 1.45</code>), triggering the non-bilayer inverted hexagonal (H<sub>II</sub>) phase transition that disrupts endosomal membranes.
+                  LNP self-assembly and endosomal escape kinetics are evaluated via an <strong>empirical surrogate biophysical model</strong> calibrated to benchmark microfluidic formulations. Protonation drives the Israelachvili Critical Packing Parameter (<code className="font-mono-dossier">CPP = v / (a0 &middot; lc)</code>) and De Gennes polymer brush scaling (<code className="font-mono-dossier">Rf / D</code>). At physiological pH 7.4, LNPs maintain a neutral stealth lamellar envelope (<code className="font-mono-dossier">CPP &approx; 0.95</code>) to minimize systemic toxicity. Upon endosomal acidification (pH 5.5), tertiary amine protonation drives cone-shaped lipid packing (<code className="font-mono-dossier">CPP &ge; 1.45</code>), triggering the non-bilayer inverted hexagonal (H<sub>II</sub>) phase transition that disrupts endosomal membranes.
                 </p>
 
                 <div
@@ -1457,7 +1457,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                 </div>
 
                 <div className={`p-3 rounded text-[10px] leading-relaxed font-sans-dossier ${isPaper ? 'bg-slate-50 border border-slate-200 text-slate-600' : 'bg-[#141210] border border-[#24201b] text-[#a69b8d]'}`}>
-                  <strong>Regulatory Compliance Attestation:</strong> {profile?.complianceAttestation || 'This document reflects algorithmic pre-IND evaluation conducted under the NanoCRISPR-3D & ImmunoShield-DRA computational platform developed at MAKAUT. Biophysical calibrations adhere to peer-reviewed nearest-neighbor kinetics (Sugimoto 1995, SantaLucia 1998, Turner 2004) and self-assembly phase transition principles (Israelachvili 2011, De Gennes 1979). In vitro characterization (cryo-EM, DLS, Sanger/NGS sequencing) is required prior to Phase 1 clinical filing.'}
+                  <strong>Regulatory Compliance Attestation:</strong> {profile?.complianceAttestation || 'This document reflects algorithmic pre-IND evaluation conducted under the NanoCRISPR-3D & ImmunoShield-DRA computational platform developed at MAKAUT. Biophysical calibrations employ peer-reviewed nearest-neighbor heteroduplex parameters (Sugimoto 1995, SantaLucia 1998) and an empirical surrogate biophysical model for LNP self-assembly and phase transitions (calibrated to Israelachvili 2011 and De Gennes 1979 scaling regimes). In vitro characterization (cryo-EM, DLS, Sanger/NGS sequencing) is required prior to Phase 1 clinical filing.'}
                 </div>
 
                 <div className="grid grid-cols-2 gap-6 pt-3 font-mono-dossier text-[10px]">

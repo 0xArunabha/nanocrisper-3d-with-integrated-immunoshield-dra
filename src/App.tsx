@@ -23,6 +23,7 @@ import { editorFor, toWorkbenchGuide, toWorkbenchSnps } from './engines/crispr/w
 import { NanoViewport3D } from './components/NanoViewport3D';
 import { LnpFormulationPanel } from './components/LnpFormulationPanel';
 import { SequenceWorkbench } from './components/SequenceWorkbench';
+import { HendersonHasselbalchCurve } from './components/HendersonHasselbalchCurve';
 import { ToolButton } from './components/ui/controls';
 import { PreIndDossierModal } from './components/PreIndDossierModal';
 import { ClinicalTourController, type CaseStudyId } from './components/ClinicalTourController';
@@ -56,20 +57,92 @@ import {
 type SortField = 'id' | 'strand' | 'gcContent' | 'CompositeScore' | 'pam';
 type SortOrder = 'asc' | 'desc';
 
-// Helper for classic pigment-coded nucleotides (Adenine, Thymine, Guanine, Cytosine)
+// Helper for precision clinical nucleotide channels (Adenine, Thymine, Guanine, Cytosine)
 const getBaseColorClass = (base: string) => {
   switch (base.toUpperCase()) {
     case 'A':
-      return 'text-[#73a880]'; // Vintage Verdigris / Sage
+      return 'text-[#E5484D]'; // Vermilion Red (Target base edit A->G)
     case 'T':
-      return 'text-[#cc6b5a]'; // Terracotta / Vermilion
+      return 'text-[#F5A623]'; // Ochre Amber
     case 'G':
-      return 'text-[#d4a359]'; // Raw Ochre / Gold
+      return 'text-[#38D399]'; // Phosphor Mint (NGG PAM)
     case 'C':
-      return 'text-[#6699a8]'; // Petrol Blue
+      return 'text-[#5B9BD5]'; // Cobalt Blue
     default:
-      return 'text-[#e8dfd1]';
+      return 'text-[#EAE6DF]';
   }
+};
+
+// Oligo Golden Gate BsmBI 5' overhang highlights (CACC & AAAC in #F5A623, rest in #EAE6DF)
+const renderForwardOligo = (oligo: string) => {
+  const upper = oligo.toUpperCase();
+  if (upper.startsWith('CACC')) {
+    return (
+      <>
+        <span className="text-[#F5A623] font-bold">{oligo.slice(0, 4)}</span>
+        <span className="text-[#EAE6DF]">{oligo.slice(4)}</span>
+      </>
+    );
+  }
+  return <span className="text-[#EAE6DF]">{oligo}</span>;
+};
+
+const renderReverseOligo = (oligo: string) => {
+  const upper = oligo.toUpperCase();
+  if (upper.startsWith('AAAC')) {
+    return (
+      <>
+        <span className="text-[#F5A623] font-bold">{oligo.slice(0, 4)}</span>
+        <span className="text-[#EAE6DF]">{oligo.slice(4)}</span>
+      </>
+    );
+  }
+  return <span className="text-[#EAE6DF]">{oligo}</span>;
+};
+
+// Codon mutation highlight (mutated base in #F5A623)
+const renderEditedCodon = (origCodon: string, editedCodon: string) => {
+  return (
+    <span className="font-mono-seq tracking-wider">
+      {editedCodon.split('').map((char, idx) => {
+        const isMutated = origCodon[idx] !== char;
+        return (
+          <span
+            key={idx}
+            className={isMutated ? 'text-[#F5A623] font-bold underline' : getBaseColorClass(char)}
+          >
+            {char}
+          </span>
+        );
+      })}
+    </span>
+  );
+};
+
+// Semantic verdict badge with solid color design (Optimal/Safe = emerald, Low Efficiency = amber, Risk = red)
+const renderVerdictBadge = (verdict: GuideCandidate['verdict']) => {
+  if (verdict.includes('Optimal') || verdict.includes('Safe')) {
+    return (
+      <span className="status-badge-success" title={verdict}>
+        <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0 opacity-90" />
+        <span className="truncate max-w-[160px]">{verdict}</span>
+      </span>
+    );
+  }
+  if (verdict.includes('Risk')) {
+    return (
+      <span className="status-badge-danger" title={verdict}>
+        <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0 opacity-90" />
+        <span className="truncate max-w-[160px]">{verdict}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="status-badge-warning" title={verdict}>
+      <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0 opacity-90" />
+      <span className="truncate max-w-[160px]">{verdict}</span>
+    </span>
+  );
 };
 
 const STORAGE_KEY = 'nanocrispr_workbench_config_v3';
@@ -177,35 +250,28 @@ function NewcomerStageTip({
   bulletPoints,
 }: NewcomerStageTipProps) {
   return (
-    <div
-      style={{
-        backgroundColor: '#161411',
-        borderColor: '#b88644',
-        borderRadius: tokens.radius,
-      }}
-      className="p-3 border-l-4 border flex flex-col gap-2 shadow-sm"
-    >
+    <div className="p-3 bg-[#16181A] border border-[#2E3338] border-l-4 border-l-[#F5A623] rounded-[2px] flex flex-col gap-2 shadow-sm">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded bg-[#b88644]/20 text-[#d4a359] border border-[#b88644]/40">
+          <span className="text-[10px] font-sans font-semibold uppercase px-2 py-0.5 rounded-[2px] bg-[#d97706] text-white shadow-xs">
             {stage}
           </span>
-          <span className="font-display font-semibold text-xs text-[#e8dfd1] flex items-center gap-1.5">
-            <Info className="w-3.5 h-3.5 text-[#d4a359]" />
+          <span className="font-display font-semibold text-xs text-[#EAE6DF] flex items-center gap-1.5">
+            <Info className="w-3.5 h-3.5 text-[#F5A623]" />
             {title}
           </span>
         </div>
         {badgeText && (
-          <span className="text-[10px] text-[#a69b8d] font-mono-seq">{badgeText}</span>
+          <span className="text-[10px] text-[#98A1A6] font-mono-seq">{badgeText}</span>
         )}
       </div>
-      <p className="text-[#a69b8d] text-[11px] leading-relaxed">{subtitle}</p>
+      <p className="text-[#98A1A6] text-[11px] leading-relaxed">{subtitle}</p>
       {bulletPoints && bulletPoints.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 border-t border-[#2a2621]">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 border-t border-[#2E3338]">
           {bulletPoints.map((point, idx) => (
-            <div key={idx} className="flex items-start gap-1.5 text-[11px] text-[#e8dfd1]">
-              <ChevronRight className="w-3.5 h-3.5 text-[#b88644] shrink-0 mt-0.5" />
-              <span className="text-[#a69b8d] leading-tight">{point}</span>
+            <div key={idx} className="flex items-start gap-1.5 text-[11px] text-[#EAE6DF]">
+              <ChevronRight className="w-3.5 h-3.5 text-[#F5A623] shrink-0 mt-0.5" />
+              <span className="text-[#98A1A6] leading-tight">{point}</span>
             </div>
           ))}
         </div>
@@ -468,6 +534,8 @@ export default function App() {
           sasSnpId: result.sasSnpId || `Ensembl-${result.canonicalTranscriptId || 'CDS'}`,
           sasAlleleFreq: result.sasAlleleFreq ?? 0.05,
           clinicalNote: result.clinicalNote || `Ensembl REST API live annotation for ${sym}.`,
+          _source: result._source || 'live_api',
+          isExploratoryPrototype: true,
         });
         setIsCustomMode(true);
         setSelectedGuideId(null);
@@ -853,30 +921,1012 @@ ${epitopeRows}
     setTimeout(() => setReportSaved(false), 2000);
   };
 
-  const getVerdictStatusColor = (verdict: GuideCandidate['verdict']) => {
-    if (verdict.includes('Optimal') || verdict.includes('Safe')) {
-      return tokens.colors.status.success;
-    }
-    if (verdict.includes('Risk')) {
-      return tokens.colors.status.danger;
-    }
-    return tokens.colors.status.warning;
+  const renderTargetHeader = () => (
+    <div className="instrument-panel">
+      <div className="instrument-header">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span className="instrument-status-dot dot-sequence" />
+          <span className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+            {activePreset.symbol} ({activePreset.name})
+          </span>
+          {/* Data Provenance Badge */}
+          <span
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[2px] text-[10px] font-sans uppercase tracking-wider font-semibold text-white shadow-xs border border-white/10 ${
+              activePreset._source === 'live_api'
+                ? 'bg-[#0284c7]'
+                : activePreset._source === 'cached'
+                ? 'bg-[#2563eb]'
+                : activePreset._source === 'fallback'
+                ? 'bg-[#d97706]'
+                : 'bg-[#059669]'
+            }`}
+            title={
+              activePreset._source === 'live_api'
+                ? 'Extracted live from Ensembl REST API (GRCh38)'
+                : activePreset._source === 'cached'
+                ? 'Loaded from local persistent bio_cache SQLite database'
+                : activePreset._source === 'fallback'
+                ? 'Offline heuristic fallback proxy'
+                : 'Curated peer-reviewed clinical disease target'
+            }
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full bg-white ${
+                activePreset._source === 'live_api' ? 'animate-pulse' : 'opacity-90'
+              }`}
+            />
+            {activePreset._source === 'live_api'
+              ? 'Live Ensembl REST'
+              : activePreset._source === 'cached'
+              ? 'Bio-Cache (Offline)'
+              : activePreset._source === 'fallback'
+              ? 'Offline Fallback'
+              : 'Curated Clinical'}
+          </span>
+          {activePreset.isExploratoryPrototype && (
+            <span
+              className="inline-flex items-center px-2 py-0.5 rounded-[2px] text-[9.5px] font-sans font-semibold bg-[#d97706] text-white shadow-xs border border-white/10"
+              title="Target position 21 is a demo coordinate for initial guide scanning feasibility; specify clinical variant coordinate for formal IND evaluation."
+            >
+              Exploratory Prototype (Locus 21 Demo)
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 text-xs text-[#98A1A6]">
+          <span>
+            Target tissue:{' '}
+            <strong className="text-[#EAE6DF] font-medium">
+              {activePreset.targetOrgan}
+            </strong>
+          </span>
+          <span className="text-[#3A4046]">•</span>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <span>Editor:</span>
+            <select
+              value={activePreset.editorType}
+              onChange={(e) => {
+                const val = e.target.value as BaseEditorType;
+                setEditorOverride(val);
+                if (isCustomMode) {
+                  setCustomPreset((prev) => ({ ...prev, editorType: val }));
+                }
+                setSelectedGuideId(null);
+              }}
+              className="bg-[#111315] border border-[#2E3338] rounded-[2px] px-2 py-0.5 text-xs text-[#EAE6DF] outline-none cursor-pointer hover:border-[#38BDF8] focus:border-[#38BDF8]"
+              title="Switch base editor architecture (ABE8e, ABE9 narrow window, BE4max)"
+            >
+              {Object.keys(BASE_EDITOR_DEFINITIONS).map((ed) => (
+                <option key={ed} value={ed}>
+                  {ed}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="text-[#3A4046]">•</span>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <span>PAM:</span>
+            <select
+              value={activePamVariant}
+              onChange={(e) => {
+                const val = e.target.value as PamVariant;
+                setPamOverride(val);
+                if (isCustomMode) {
+                  setCustomPreset((prev) => ({ ...prev, pamVariant: val }));
+                }
+                setSelectedGuideId(null);
+              }}
+              className="bg-[#111315] border border-[#2E3338] rounded-[2px] px-2 py-0.5 text-xs text-[#EAE6DF] outline-none cursor-pointer hover:border-[#38BDF8] focus:border-[#38BDF8]"
+              title="Switch Cas9 PAM recognition variant (SpCas9, SpCas9-NG, SpRY)"
+            >
+              {Object.entries(PAM_VARIANT_DEFINITIONS).map(([pamKey, pamDef]) => (
+                <option key={pamKey} value={pamKey}>
+                  {pamDef.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div className="p-2.5 flex flex-col gap-1 text-xs bg-[#1E2124]">
+        <div className="text-[#98A1A6] flex flex-wrap gap-x-4 gap-y-1">
+          <span>
+            Clinical indication:{' '}
+            <span className="text-[#EAE6DF] font-medium">{activePreset.disease}</span>
+          </span>
+          <span>
+            PAM mode:{' '}
+            <span className="text-[#EAE6DF] font-mono-seq">
+              {activePamDefinition.recognition}
+            </span>
+          </span>
+          <span>
+            Deaminase window:{' '}
+            <span className="text-[#EAE6DF] font-mono-seq">
+              spacer pos {editorWindowLabel}
+            </span>
+          </span>
+        </div>
+        <p className="text-[#646D73] text-[11px] mt-0.5 leading-relaxed">
+          {activePreset.clinicalNote}
+        </p>
+      </div>
+    </div>
+  );
+
+  const renderBiophysicalCards = () => (
+    <div className="instrument-panel">
+      <div className="instrument-header">
+        <div className="instrument-header-title">
+          <span className="instrument-status-dot dot-lnp" />
+          <span>CALCULATED BIOPHYSICAL PROPERTIES</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span
+            className={
+              biophysics.stabilityStatus === 'Optimal Clinical LNP'
+                ? 'status-badge-success'
+                : 'status-badge-warning'
+            }
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+            <span>{biophysics.stabilityStatus}</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="p-2 grid grid-cols-2 sm:grid-cols-3 gap-1.5 bg-[#1E2124]">
+        <div className="biophysical-card p-2.5 bg-[#262A2E] border border-[#2E3338] rounded-[2px] flex flex-col justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-[#98A1A6]">Hydrodynamic diameter</div>
+          <div className="font-mono-seq text-[20px] font-bold text-[#EAE6DF] my-0.5">
+            {biophysics.diameterNm} <span className="text-[13px] text-[#949DA3] font-normal">nm</span>
+          </div>
+          <div className="border-t border-[#1F2428] pt-1 text-[11px] text-[#949DA3] font-mono-seq sub-metric font-medium">
+            PDI: {biophysics.pdi.toFixed(2)}
+          </div>
+        </div>
+
+        <div className="biophysical-card p-2.5 bg-[#262A2E] border border-[#2E3338] rounded-[2px] flex flex-col justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-[#98A1A6]">Zeta potential (pH 7.4)</div>
+          <div className="font-mono-seq text-[20px] font-bold text-[#EAE6DF] my-0.5">
+            {biophysics.zetaPotentialMv > 0 ? `+${biophysics.zetaPotentialMv}` : biophysics.zetaPotentialMv}{' '}
+            <span className="text-[13px] text-[#949DA3] font-normal">mV</span>
+          </div>
+          <div className="border-t border-[#1F2428] pt-1 text-[11px] text-[#949DA3] font-mono-seq sub-metric font-medium">
+            Blood ionized: {biophysics.bloodProtonationPct}%
+          </div>
+        </div>
+
+        <div className="biophysical-card p-2.5 bg-[#262A2E] border border-[#2E3338] rounded-[2px] flex flex-col justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-[#98A1A6]">Endosomal ionization</div>
+          <div className="font-mono-seq text-[20px] font-bold text-[#EAE6DF] my-0.5">
+            {biophysics.endosomalProtonationPct} <span className="text-[13px] text-[#949DA3] font-normal">%</span>
+          </div>
+          <div className="border-t border-[#1F2428] pt-1 text-[11px] text-[#949DA3] font-mono-seq sub-metric font-medium">
+            At late endosome pH 5.5
+          </div>
+        </div>
+
+        <div className="biophysical-card p-2.5 bg-[#262A2E] border border-[#2E3338] rounded-[2px] flex flex-col justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-[#98A1A6]">ApoE uptake score</div>
+          <div className="font-mono-seq text-[20px] font-bold text-[#EAE6DF] my-0.5">
+            {biophysics.cellularUptakeScore} <span className="text-[13px] text-[#949DA3] font-normal">/ 100</span>
+          </div>
+          <div className="border-t border-[#1F2428] pt-1 text-[11px] text-[#949DA3] font-mono-seq sub-metric font-medium">
+            Escape eff: {biophysics.endosomalEscapeEfficiency}%
+          </div>
+        </div>
+
+        <div className="biophysical-card p-2.5 bg-[#262A2E] border border-[#2E3338] rounded-[2px] flex flex-col justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-[#98A1A6]">De Gennes brush (RF/D)</div>
+          <div className="font-mono-seq text-[20px] font-bold text-[#EAE6DF] my-0.5">
+            {biophysics.deGennesRfOverD?.toFixed(2) ?? '—'}
+          </div>
+          <div className="border-t border-[#1F2428] pt-1 text-[11px] text-[#949DA3] font-mono-seq sub-metric font-medium">
+            {(biophysics.deGennesRfOverD ?? 0) >= 1.0 ? 'Dense Brush' : 'Mushroom Regime'}
+          </div>
+        </div>
+
+        <div className="biophysical-card p-2.5 bg-[#262A2E] border border-[#2E3338] rounded-[2px] flex flex-col justify-between">
+          <div className="text-[11px] uppercase tracking-wider text-[#98A1A6]">Packing param (CPP)</div>
+          <div className="font-mono-seq text-[20px] font-bold text-[#EAE6DF] my-0.5">
+            {biophysics.criticalPackingParam?.toFixed(2) ?? '—'}
+          </div>
+          <div className="border-t border-[#1F2428] pt-1 text-[11px] text-[#949DA3] font-mono-seq sub-metric font-medium">
+            SAXS d: {biophysics.saxsBraggSpacingNm ?? 6.1} nm
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderOrganBiodistribution = () => (
+    <div className="instrument-panel">
+      <div className="instrument-header">
+        <div className="instrument-header-title">
+          <span className="instrument-status-dot dot-lnp" />
+          <span>PREDICTED ORGAN BIODISTRIBUTION (SORT MODEL)</span>
+        </div>
+        <span className="text-[11px] text-[#949DA3]">Apparent charge partitioning</span>
+      </div>
+
+      <div className="p-2 flex flex-col gap-1.5 bg-[#1E2124] text-xs">
+        <div>
+          <div className="flex justify-between mb-0.5 text-[11px]">
+            <span className="text-[#98A1A6]">Liver (hepatocytes)</span>
+            <span className="font-mono-seq font-semibold text-[#EAE6DF]">
+              {biophysics.organTropism.liver}%
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] overflow-hidden">
+            <div
+              style={{
+                width: `${biophysics.organTropism.liver}%`,
+                backgroundColor: 'var(--lipid-ionizable, #D97736)',
+              }}
+              className="h-full transition-all duration-300"
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="flex justify-between mb-0.5 text-[11px]">
+            <span className="text-[#98A1A6]">Spleen (lymphoid / immune cells)</span>
+            <span className="font-mono-seq font-semibold text-[#EAE6DF]">
+              {biophysics.organTropism.spleen}%
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] overflow-hidden">
+            <div
+              style={{
+                width: `${biophysics.organTropism.spleen}%`,
+                backgroundColor: 'var(--lipid-helper-dspc, #38BDF8)',
+              }}
+              className="h-full transition-all duration-300"
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className="flex justify-between mb-0.5 text-[11px]">
+            <span className="text-[#98A1A6]">Lungs (endothelial beds)</span>
+            <span className="font-mono-seq font-semibold text-[#EAE6DF]">
+              {biophysics.organTropism.lungs}%
+            </span>
+          </div>
+          <div className="w-full h-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] overflow-hidden">
+            <div
+              style={{
+                width: `${biophysics.organTropism.lungs}%`,
+                backgroundColor: 'var(--lipid-peg, #38D399)',
+              }}
+              className="h-full transition-all duration-300"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderTop3GuidesCard = () => {
+    const top3 = processedGuides.slice(0, 3);
+    return (
+      <div className="instrument-panel">
+        <div className="instrument-header">
+          <div className="instrument-header-title">
+            <span className="instrument-status-dot dot-sequence" />
+            <span>TOP 3 CANDIDATE GUIDES (TARGET LOCUS)</span>
+          </div>
+          <button
+            onClick={() => setActiveTab('crispr')}
+            className="tactile-btn text-xs"
+            title="Switch to Base Editor tab to view all 10 candidates, filters, and cloning architecture"
+          >
+            <span>View all {processedGuides.length} candidates &amp; Cloning Oligos &rarr;</span>
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-xs">
+            <thead className="bg-[#16181A] text-[#98A1A6] text-[11px] border-b border-[#2E3338]">
+              <tr>
+                <th className="py-2 px-2.5 font-medium">Guide ID</th>
+                <th className="py-2 px-2.5 font-medium">Strand</th>
+                <th className="py-2 px-2.5 font-medium">Protospacer (5&apos; &rarr; 3&apos;)</th>
+                <th className="py-2 px-2.5 font-medium">PAM</th>
+                <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Score</th>
+                <th className="py-2 px-2.5 font-medium">Bystanders</th>
+                <th className="py-2 px-2.5 font-medium">Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {top3.map((guide, idx) => {
+                const isSelected = selectedGuide?.id === guide.id;
+                return (
+                  <tr
+                    key={guide.id}
+                    onClick={() => setSelectedGuideId(guide.id)}
+                    className={`border-b border-[#2E3338] cursor-pointer transition text-[11px] hover:bg-[#2A2F34] ${
+                      isSelected
+                        ? 'bg-[#262A2E] border-l-4 border-l-[#38BDF8]'
+                        : idx % 2 === 0
+                        ? 'bg-[#1E2124]'
+                        : 'bg-[#16191C]'
+                    }`}
+                  >
+                    <td className="py-2 px-2.5 font-mono-seq text-[#EAE6DF]">
+                      <span className="flex items-center gap-1.5">
+                        {isSelected && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#38BDF8]" />
+                        )}
+                        <span className={isSelected ? 'font-bold text-[#38BDF8]' : ''}>
+                          {guide.id}
+                        </span>
+                      </span>
+                    </td>
+                    <td className="py-2 px-2.5 font-mono-seq">
+                      <span
+                        className={
+                          guide.strand === '+' ? 'text-[#38D399]' : 'text-[#5B9BD5]'
+                        }
+                      >
+                        {guide.strand === '+' ? '(+) Sense' : '(-) Antisense'}
+                      </span>
+                    </td>
+                    <td className="py-2 px-2.5 font-mono-seq tracking-wider">
+                      {guide.spacer.split('').map((char, charIdx) => (
+                        <span key={charIdx} className={getBaseColorClass(char)}>
+                          {char}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="py-2 px-2.5 font-mono-seq font-semibold text-[#F5A623]">
+                      {guide.pam}
+                    </td>
+                    <td className="py-2 px-2.5 text-right font-mono-seq font-semibold text-[#EAE6DF]">
+                      {guide.CompositeScore}
+                    </td>
+                    <td className="py-2 px-2.5">
+                      {guide.bystanders.length === 0 ? (
+                        <span className="text-[#646D73] font-mono-seq text-[11px]">None</span>
+                      ) : (
+                        <span className="text-[#F5A623] font-mono-seq text-[11px] font-medium">
+                          {guide.bystanders.length} bystander{guide.bystanders.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 px-2.5">
+                      {renderVerdictBadge(guide.verdict)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
   };
+
+  const renderImmunoShieldSummaryStrip = () => (
+    <div className="instrument-panel immunoshield-dock">
+      <div className="instrument-header">
+        <div className="instrument-header-title">
+          <span className="instrument-status-dot dot-immunology" />
+          <span>IMMUNOSHIELD-DRA IMMUNOGENICITY PROFILE</span>
+        </div>
+        <button
+          onClick={() => setActiveTab('immunology')}
+          className="tactile-btn text-xs"
+          title="Switch to ImmunoShield tab to configure patient HLA alleles and de-immunization mutations"
+        >
+          <span>Configure HLA Panel &rarr;</span>
+        </button>
+      </div>
+
+      <div className="p-3 bg-[#1E2124] flex flex-col gap-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={
+                residualHlaRisk === null
+                  ? 'status-badge-neutral'
+                  : residualHlaRisk <= 20
+                  ? 'status-badge-success'
+                  : residualHlaRisk <= 55
+                  ? 'status-badge-warning'
+                  : 'status-badge-danger'
+              }
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+              <span>
+                CTL Risk: {residualHlaRisk === null ? 'Not assessed' : `${residualHlaRisk} / 100`}
+              </span>
+            </span>
+
+            <span
+              className={
+                allStealthEnabled ? 'status-badge-success' : 'status-badge-warning'
+              }
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+              <span>
+                {allStealthEnabled
+                  ? `All ${patientRelevantEpitopes.length} selected stealth mutations: Active`
+                  : 'Stealth mutations: Partial / Inactive'}
+              </span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] text-[#98A1A6]">Patient HLA Alleles:</span>
+            {selectedHlaAlleles.slice(0, 5).map((allele) => (
+              <span
+                key={allele}
+                className="px-2 py-0.5 rounded-[2px] bg-[#059669] text-white text-[10px] font-sans font-semibold shadow-xs border border-white/10"
+              >
+                {allele}
+              </span>
+            ))}
+            {selectedHlaAlleles.length > 5 && (
+              <span className="text-[10px] text-[#949DA3]">+{selectedHlaAlleles.length - 5} more</span>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-[#2E3338] pt-2 text-[11px] text-[#98A1A6] leading-relaxed flex items-center justify-between flex-wrap gap-2">
+          <span>
+            De-immunized SpCas9 neutralizes cytotoxic T-lymphocyte (CTL) surface epitopes across high-frequency South Asian HLA Class I/II haplotypes while maintaining catalytic triad stability.
+          </span>
+          <span className="text-[10px] font-mono-seq text-[#949DA3]">
+            D10 / H840 Catalytic Triad: Intact
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderProtospacerTable = () => (
+    <div className="instrument-panel">
+      <div className="instrument-header">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="instrument-status-dot dot-sequence" />
+          <span className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+            Discovered protospacers ({processedGuides.length} candidates)
+          </span>
+          <span className="text-[11px] text-[#646D73]">
+            Dual-strand (+) and (-) search
+          </span>
+        </div>
+
+        {/* Filtering Controls */}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="flex items-center gap-1.5 text-[#98A1A6]">
+            <span>Strand:</span>
+            <select
+              value={filterStrand}
+              onChange={(e) => setFilterStrand(e.target.value as any)}
+              className="bg-[#111315] border border-[#2E3338] rounded-[2px] p-1 text-xs text-[#EAE6DF] outline-none hover:border-[#38BDF8]"
+            >
+              <option value="all">All strands (+/-)</option>
+              <option value="+">Sense (+) only</option>
+              <option value="-">Antisense (-) only</option>
+            </select>
+          </div>
+
+          <label className="flex items-center gap-1.5 cursor-pointer text-[#98A1A6] hover:text-[#EAE6DF]">
+            <input
+              type="checkbox"
+              checked={preferredPamOnly}
+              onChange={(e) => setPreferredPamOnly(e.target.checked)}
+              className="accent-[#38BDF8]"
+            />
+            <span>{activePamDefinition.preferredPamLabel}</span>
+          </label>
+
+          <label className="flex items-center gap-1.5 cursor-pointer text-[#98A1A6] hover:text-[#EAE6DF]">
+            <input
+              type="checkbox"
+              checked={hideSnpCollisions}
+              onChange={(e) => setHideSnpCollisions(e.target.checked)}
+              className="accent-[#38BDF8]"
+            />
+            <span>Exclude SAS SNP collisions</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Candidates Table */}
+      <div className="overflow-x-auto max-h-[340px]">
+        <table className="w-full border-collapse text-left text-xs">
+          <thead className="sticky top-0 z-10 bg-[#16181A] text-[#98A1A6] text-[11px] border-b border-[#2E3338]">
+            <tr>
+              <th
+                className="py-2 px-2.5 font-medium cursor-pointer hover:text-[#EAE6DF]"
+                onClick={() => handleSort('id')}
+              >
+                Guide ID
+              </th>
+              <th
+                className="py-2 px-2.5 font-medium cursor-pointer hover:text-[#EAE6DF]"
+                onClick={() => handleSort('strand')}
+              >
+                Strand
+              </th>
+              <th className="py-2 px-2.5 font-medium">Protospacer (5&apos; &rarr; 3&apos;)</th>
+              <th
+                className="py-2 px-2.5 font-medium cursor-pointer hover:text-[#EAE6DF]"
+                onClick={() => handleSort('pam')}
+              >
+                PAM
+              </th>
+              <th
+                className="py-2 px-2.5 font-medium text-right cursor-pointer hover:text-[#EAE6DF]"
+                onClick={() => handleSort('gcContent')}
+              >
+                GC%
+              </th>
+              <th
+                className="py-2 px-2.5 font-medium text-right cursor-pointer hover:text-[#EAE6DF]"
+                onClick={() => handleSort('CompositeScore')}
+              >
+                Score
+              </th>
+              <th className="py-2 px-2.5 font-medium">Bystanders</th>
+              <th className="py-2 px-2.5 font-medium">Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            {processedGuides.map((guide, idx) => {
+              const isSelected = selectedGuide?.id === guide.id;
+
+              return (
+                <tr
+                  key={guide.id}
+                  onClick={() => setSelectedGuideId(guide.id)}
+                  className={`border-b border-[#2E3338] cursor-pointer transition text-[11px] hover:bg-[#2A2F34] ${
+                    isSelected
+                      ? 'bg-[#262A2E] border-l-4 border-l-[#38BDF8]'
+                      : idx % 2 === 0
+                      ? 'bg-[#1E2124]'
+                      : 'bg-[#16191C]'
+                  }`}
+                >
+                  <td className="py-2 px-2.5 font-mono-seq text-[#EAE6DF]">
+                    <span className="flex items-center gap-1.5">
+                      {isSelected && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#38BDF8]" />
+                      )}
+                      <span className={isSelected ? 'font-bold text-[#38BDF8]' : ''}>
+                        {guide.id}
+                      </span>
+                    </span>
+                  </td>
+                  <td className="py-2 px-2.5 font-mono-seq">
+                    <span
+                      className={
+                        guide.strand === '+' ? 'text-[#38D399]' : 'text-[#5B9BD5]'
+                      }
+                    >
+                      {guide.strand === '+' ? '(+) Sense' : '(-) Antisense'}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2.5 font-mono-seq tracking-wider">
+                    {guide.spacer.split('').map((char, charIdx) => (
+                      <span key={charIdx} className={getBaseColorClass(char)}>
+                        {char}
+                      </span>
+                    ))}
+                  </td>
+                  <td className="py-2 px-2.5 font-mono-seq font-semibold text-[#F5A623]">
+                    {guide.pam}
+                  </td>
+                  <td className="py-2 px-2.5 text-right font-mono-seq text-[#98A1A6]">
+                    {guide.gcContent.toFixed(1)}%
+                  </td>
+                  <td className="py-2 px-2.5 text-right font-mono-seq font-semibold text-[#EAE6DF]">
+                    {guide.CompositeScore}
+                  </td>
+                  <td className="py-2 px-2.5">
+                    {guide.bystanders.length === 0 ? (
+                      <span className="text-[#646D73] font-mono-seq text-[11px]">None</span>
+                    ) : (
+                      <span className="text-[#F5A623] font-mono-seq text-[11px] font-medium">
+                        {guide.bystanders.length} bystander{guide.bystanders.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 px-2.5">
+                    {renderVerdictBadge(guide.verdict)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const renderCloningAndBystandersSideBySide = () => {
+    if (!selectedGuide) return null;
+
+    const displayedBystanders =
+      annotatedBystanders.length === selectedGuide.bystanders.length
+        ? annotatedBystanders
+        : selectedGuide.bystanders;
+
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {/* Left: Cloning Architecture */}
+        {cloningOligos && (
+          <div className="instrument-panel">
+            <div className="instrument-header">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="instrument-status-dot dot-sequence" />
+                <span className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+                  {selectedGuide.id} Cloning Architecture
+                </span>
+                <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-[2px] bg-[#0284c7] text-white shadow-xs border border-white/10">
+                  Overhangs: {cloningOligos.overhangSystem}
+                </span>
+              </div>
+              <span className="text-[11px] text-[#98A1A6]">
+                GC: {selectedGuide.gcContent.toFixed(1)}% • Score: {selectedGuide.CompositeScore}/100 • Target in window: {selectedGuide.targetInWindow ? 'Yes' : 'No'}
+              </span>
+            </div>
+
+            <div className="p-3 bg-[#1E2124] flex flex-col gap-3 text-xs">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-[#98A1A6]">Forward Oligo (CACC overhang):</span>
+                  <button
+                    onClick={() => handleCopyOligo(cloningOligos.forwardOligo, 'fwd')}
+                    className="tactile-btn text-[10px] py-1 px-2"
+                  >
+                    {copiedOligo === 'fwd' ? (
+                      <Check className="w-3 h-3 text-[#38D399]" />
+                    ) : (
+                      <Copy className="w-3 h-3" />
+                    )}
+                    <span>{copiedOligo === 'fwd' ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+                <div className="p-2.5 rounded-[2px] bg-[#0A0C0E] border border-[#2E3338] font-mono-seq text-[11px] break-all select-all shadow-inner">
+                  {renderForwardOligo(cloningOligos.forwardOligo)}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-[#98A1A6]">Reverse Oligo (AAAC overhang):</span>
+                  <button
+                    onClick={() => handleCopyOligo(cloningOligos.reverseOligo, 'rev')}
+                    className="tactile-btn text-[10px] py-1 px-2"
+                  >
+                    {copiedOligo === 'rev' ? (
+                      <Check className="w-3 h-3 text-[#38D399]" />
+                    ) : (
+                      <Copy className="w-3 h-3" />
+                    )}
+                    <span>{copiedOligo === 'rev' ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+                <div className="p-2.5 rounded-[2px] bg-[#0A0C0E] border border-[#2E3338] font-mono-seq text-[11px] break-all select-all shadow-inner">
+                  {renderReverseOligo(cloningOligos.reverseOligo)}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Right: Deaminase Window Bystander Consequences */}
+        <div className="instrument-panel">
+          <div className="instrument-header">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="instrument-status-dot dot-amber" />
+              <span className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+                Deaminase window (spacer pos {editorWindowLabel}) bystander consequences
+              </span>
+              <span className="status-badge-success text-[10px]">
+                <Sparkles className="w-3 h-3 text-white" />
+                ClinVar &amp; Grantham Evaluated
+              </span>
+            </div>
+            <span className="text-[11px] text-[#646D73]">
+              {displayedBystanders.length} potential edits in window
+            </span>
+          </div>
+
+          <div className="p-2 bg-[#1E2124]">
+            {displayedBystanders.length === 0 ? (
+              <p className="text-[11px] text-[#646D73] py-4 text-center">
+                No editable bases found within active deamination window ({editorWindowLabel}). Clean on-target window.
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-[300px]">
+                <table className="w-full border-collapse text-left text-xs">
+                  <thead className="sticky top-0 bg-[#16181A] text-[#98A1A6] text-[11px] border-b border-[#2E3338]">
+                    <tr>
+                      <th className="py-1.5 px-2 font-medium">Spacer pos</th>
+                      <th className="py-1.5 px-2 font-medium">Genomic bp</th>
+                      <th className="py-1.5 px-2 font-medium">Original codon</th>
+                      <th className="py-1.5 px-2 font-medium">Edited codon</th>
+                      <th className="py-1.5 px-2 font-medium">Consequence</th>
+                      <th className="py-1.5 px-2 font-medium">ClinVar &amp; Grantham</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayedBystanders.map((b, i) => {
+                      const isSafe =
+                        b.classification === 'Target Edit' ||
+                        b.classification === 'Silent (Synonymous)';
+
+                      return (
+                        <tr
+                          key={i}
+                          className="border-b border-[#2E3338] text-[11px] hover:bg-[#2A2F34] transition"
+                        >
+                          <td className="py-1.5 px-2 font-mono-seq text-[#98A1A6]">{b.guidePos}</td>
+                          <td className="py-1.5 px-2 font-mono-seq text-[#98A1A6]">
+                            bp {b.genomicIndex + 1}
+                          </td>
+                          <td className="py-1.5 px-2 font-mono-seq tracking-wider">
+                            {b.originalCodon.split('').map((ch, cIdx) => (
+                              <span key={cIdx} className={getBaseColorClass(ch)}>
+                                {ch}
+                              </span>
+                            ))}
+                            <span className="text-[#98A1A6] ml-1">({b.originalAA})</span>
+                          </td>
+                          <td className="py-1.5 px-2 font-mono-seq tracking-wider">
+                            {renderEditedCodon(b.originalCodon, b.editedCodon)}
+                            <span className="text-[#EAE6DF] ml-1 font-semibold">({b.editedAA})</span>
+                          </td>
+                          <td className="py-1.5 px-2">
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                  isSafe ? 'bg-[#38D399]' : 'bg-[#E5484D]'
+                                }`}
+                              />
+                              <span
+                                className={
+                                  b.classification === 'Silent (Synonymous)'
+                                    ? 'text-[#38D399] font-medium'
+                                    : b.classification === 'Target Edit'
+                                    ? 'text-[#38BDF8] font-medium'
+                                    : 'text-[#E5484D] font-medium'
+                                }
+                              >
+                                {b.classification}
+                              </span>
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-2">
+                            {b.clinvarTag ? (
+                              <div className="flex flex-col gap-0.5">
+                                <span
+                                  className={`font-medium text-[10px] ${
+                                    b.riskLevel?.includes('Pathogenic')
+                                      ? 'text-[#E5484D]'
+                                      : b.riskLevel?.includes('Low') || b.riskLevel?.includes('Benign')
+                                      ? 'text-[#38D399]'
+                                      : 'text-[#38BDF8]'
+                                  }`}
+                                >
+                                  {b.clinvarTag}
+                                </span>
+                                {b.biochemicalImpact && (
+                                  <span
+                                    className="text-[9.5px] text-[#646D73] leading-tight max-w-[200px] truncate block"
+                                    title={b.biochemicalImpact}
+                                  >
+                                    {b.biochemicalImpact}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] text-[#646D73]">Evaluating...</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderImmunoShieldFullModule = () => (
+    <div className="instrument-panel">
+      <div className="instrument-header">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className="instrument-status-dot dot-immunology" />
+          <h2 className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+            ImmunoShield-DRA: Cas9 surface epitope immunogenicity (South Asian HLA panel)
+          </h2>
+          <span
+            className={
+              residualHlaRisk === null
+                ? 'status-badge-neutral'
+                : residualHlaRisk <= 20
+                ? 'status-badge-success'
+                : residualHlaRisk <= 55
+                ? 'status-badge-warning'
+                : 'status-badge-danger'
+            }
+          >
+            CTL Risk: {residualHlaRisk === null ? 'Not assessed' : `${residualHlaRisk} / 100`}
+          </span>
+        </div>
+
+        <button
+          onClick={toggleAllStealth}
+          disabled={!hasPatientHlaSelection || patientRelevantEpitopes.length === 0}
+          className="tactile-btn text-xs"
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              allStealthEnabled ? 'bg-[#38D399]' : 'bg-[#F5A623]'
+            }`}
+          />
+          <span>
+            {!hasPatientHlaSelection
+              ? 'Select patient HLA alleles'
+              : allStealthEnabled
+              ? `All ${patientRelevantEpitopes.length} selected stealth mutations: Active`
+              : 'Restore selected stealth mutations'}
+          </span>
+        </button>
+      </div>
+
+      <div className="p-3 bg-[#1E2124] flex flex-col gap-3">
+        <fieldset className="bg-[#111315] border border-[#2E3338] rounded-[2px] px-3 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <legend className="text-[11px] font-semibold text-[#EAE6DF] uppercase tracking-wider">
+              Patient HLA haplotype / allele set
+            </legend>
+            <div className="flex items-center gap-3 text-[10px]">
+              <button
+                type="button"
+                onClick={() => setSelectedHlaAlleles([...SOUTH_ASIAN_HLA_ALLELES])}
+                className="text-[#38BDF8] hover:underline cursor-pointer"
+              >
+                Select full panel
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedHlaAlleles([])}
+                className="text-[#98A1A6] hover:text-[#EAE6DF] hover:underline cursor-pointer"
+              >
+                Clear all
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {SOUTH_ASIAN_HLA_ALLELES.map((allele) => (
+              <label
+                key={allele}
+                className="flex items-center gap-1.5 cursor-pointer text-[11px] text-[#98A1A6] hover:text-[#EAE6DF]"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedHlaAlleles.includes(allele)}
+                  onChange={() => togglePatientHlaAllele(allele)}
+                  className="accent-[#38D399]"
+                />
+                <span className="font-mono-seq">{allele}</span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] text-[#646D73]">
+            Only epitopes associated with selected patient alleles contribute to the composite residual-risk score.
+          </p>
+        </fieldset>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-xs">
+            <thead className="bg-[#16181A] text-[#98A1A6] text-[11px] border-b border-[#2E3338]">
+              <tr>
+                <th className="py-2 px-2.5 font-medium">Epitope peptide</th>
+                <th className="py-2 px-2.5 font-medium">Residues</th>
+                <th className="py-2 px-2.5 font-medium">Protein domain</th>
+                <th className="py-2 px-2.5 font-medium">South Asian HLA allele</th>
+                <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Risk score</th>
+                <th className="py-2 px-2.5 font-medium">De-immunization mutation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!hasPatientHlaSelection ? (
+                <tr>
+                  <td colSpan={6} className="py-4 px-2 text-center text-[11px] text-[#646D73]">
+                    Select one or more patient HLA alleles above to assess the curated epitope panel.
+                  </td>
+                </tr>
+              ) : patientRelevantEpitopes.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-4 px-2 text-center text-[11px] text-[#646D73]">
+                    No curated panel epitopes match the selected HLA alleles.
+                  </td>
+                </tr>
+              ) : (
+                patientRelevantEpitopes.map((ep, idx) => {
+                  const isShielded = activeStealthMutations[ep.peptide];
+                  return (
+                    <tr
+                      key={ep.peptide}
+                      className={`border-b border-[#2E3338] text-[11px] hover:bg-[#2A2F34] transition ${
+                        idx % 2 === 0 ? 'bg-[#1E2124]' : 'bg-[#16191C]'
+                      }`}
+                    >
+                      <td className="py-2 px-2.5 font-mono-seq font-semibold text-[#EAE6DF]">
+                        {ep.peptide}
+                      </td>
+                      <td className="py-2 px-2.5 font-mono-seq text-[#98A1A6]">
+                        {ep.residueRange}
+                      </td>
+                      <td className="py-2 px-2.5 text-[#98A1A6]">{ep.domain}</td>
+                      <td className="py-2 px-2.5 font-mono-seq text-[#98A1A6]">{ep.hlaAllele}</td>
+                      <td className="py-2 px-2.5 text-right font-mono-seq">
+                        {isShielded ? (
+                          <span className="text-[#38D399] font-medium">&lt;10</span>
+                        ) : (
+                          <span className="text-[#E5484D] font-semibold">
+                            {ep.bindingScore} / 100
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-2.5">
+                        <label className="flex items-center gap-2 cursor-pointer text-[#EAE6DF]">
+                          <input
+                            type="checkbox"
+                            checked={isShielded}
+                            onChange={() => toggleSingleEpitope(ep.peptide)}
+                            className="accent-[#38D399]"
+                            aria-label={`Enable ${ep.stealthMutation}`}
+                          />
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                              isShielded ? 'bg-[#38D399]' : 'bg-[#E5484D]'
+                            }`}
+                          />
+                          <span className="font-mono-seq">
+                            {isShielded ? ep.stealthMutation : 'Wild-type (unmodified anchor residue)'}
+                          </span>
+                        </label>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div
       style={{
-        backgroundColor: tokens.colors.canvas,
-        color: tokens.colors.textPrimary,
+        backgroundColor: 'var(--bg-chassis-deep, #141618)',
+        color: 'var(--text-primary-ink, #EAE6DF)',
         fontFamily: tokens.typography.fontSans,
       }}
-      className="min-h-screen flex flex-col text-xs antialiased selection:bg-[#4d828f]/30 selection:text-[#e8dfd1]"
+      className="min-h-screen flex flex-col text-xs antialiased selection:bg-[#38BDF8]/30 selection:text-[#EAE6DF]"
     >
-      {/* Top Application Header / Menu Bar */}
+      {/* Top Application Header / Precision Lab Instrument Bar */}
       <header
         style={{
-          backgroundColor: tokens.colors.surface,
-          borderColor: tokens.colors.border,
+          backgroundColor: 'var(--bg-panel-header, #16181A)',
+          borderColor: 'var(--border-chassis, #2E3338)',
         }}
         className={`border-b px-4 py-2 flex flex-wrap items-center justify-between gap-3 shrink-0 ${isDossierModalOpen ? 'print:hidden' : ''}`}
       >
@@ -884,104 +1934,71 @@ ${epitopeRows}
           <div className="flex items-center gap-2">
             <span
               style={{
-                backgroundColor: tokens.colors.accent,
-                borderRadius: tokens.radius,
+                backgroundColor: 'var(--signal-halide-cyan, #38BDF8)',
+                borderRadius: '2px',
               }}
               className="w-2 h-3.5 inline-block"
             />
-            <span className="font-display font-bold text-sm tracking-tight text-[#e8dfd1]">
+            <span className="font-display font-bold text-sm tracking-tight text-[#EAE6DF]">
               NanoCRISPR-3D
             </span>
-            <span className="text-[#70675c] text-xs hidden sm:inline">/</span>
-            <span className="text-[#a69b8d] text-xs hidden sm:inline">
+            <span className="text-[#646D73] text-xs hidden sm:inline">/</span>
+            <span className="text-[#98A1A6] text-xs hidden sm:inline">
               Base editor &amp; lipid nanoparticle evaluation workbench
             </span>
           </div>
 
-          {/* Target Gene Selector Tabs */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.canvas,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="flex items-center p-0.5 border"
-          >
-            {GENE_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                onClick={() => {
-                  setSelectedPresetId(preset.id);
-                  setIsCustomMode(false);
-                  setEditorOverride(null);
-                  setPamOverride(null);
-                  setSelectedGuideId(null);
-                }}
-                style={{
-                  backgroundColor:
-                    !isCustomMode && selectedPresetId === preset.id
-                      ? tokens.colors.surfaceSelected
-                      : 'transparent',
-                  color:
-                    !isCustomMode && selectedPresetId === preset.id
-                      ? tokens.colors.textPrimary
-                      : tokens.colors.textSecondary,
-                  borderRadius: tokens.radius,
-                }}
-                className="px-2.5 py-1 text-xs font-medium hover:text-[#e8dfd1] transition cursor-pointer"
-              >
-                {preset.id}
-              </button>
-            ))}
+          {/* Target Gene Selector Hardware Switches */}
+          <div className="switch-track-recessed">
+            {GENE_PRESETS.map((preset) => {
+              const isActive = !isCustomMode && selectedPresetId === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => {
+                    setSelectedPresetId(preset.id);
+                    setIsCustomMode(false);
+                    setEditorOverride(null);
+                    setPamOverride(null);
+                    setSelectedGuideId(null);
+                  }}
+                  className={`switch-btn-tactile ${isActive ? 'active' : ''}`}
+                >
+                  {isActive && <span className="led-indicator-dot" />}
+                  <span>{preset.id}</span>
+                </button>
+              );
+            })}
 
             <button
               onClick={() => {
                 setIsCustomMode(true);
                 setSelectedGuideId(null);
               }}
-              style={{
-                backgroundColor: isCustomMode ? tokens.colors.surfaceSelected : 'transparent',
-                color: isCustomMode ? tokens.colors.textPrimary : tokens.colors.textSecondary,
-                borderRadius: tokens.radius,
-              }}
-              className="px-2.5 py-1 text-xs font-medium hover:text-[#e8dfd1] transition cursor-pointer"
+              className={`switch-btn-tactile ${isCustomMode ? 'active' : ''}`}
             >
-              Custom
+              {isCustomMode && <span className="led-indicator-dot" />}
+              <span>Custom</span>
             </button>
           </div>
 
-          {/* Dedicated Audience Mode: Newcomer vs Expert Workbench */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.canvas,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="flex items-center p-0.5 border text-xs"
-          >
+          {/* Dedicated Audience Mode Hardware Switch: Newcomer vs Expert Workbench */}
+          <div className="switch-track-recessed text-xs">
             <button
               onClick={() => setWorkbenchMode('newcomer')}
-              style={{
-                backgroundColor: workbenchMode === 'newcomer' ? '#b88644' : 'transparent',
-                color: workbenchMode === 'newcomer' ? '#ffffff' : tokens.colors.textSecondary,
-                borderRadius: tokens.radius,
-              }}
-              className="px-2 py-0.5 font-medium transition cursor-pointer flex items-center gap-1.5"
+              className={`switch-btn-tactile ${workbenchMode === 'newcomer' ? 'active' : ''}`}
               title="Newcomer Guided Mode: streamlined walkthroughs, educational tips, and clinical presets"
             >
+              {workbenchMode === 'newcomer' && <span className="led-indicator-dot" />}
               <GraduationCap className="w-3.5 h-3.5" />
               <span>Newcomer Mode</span>
             </button>
             <button
               onClick={() => setWorkbenchMode('expert')}
-              style={{
-                backgroundColor: workbenchMode === 'expert' ? tokens.colors.surfaceSelected : 'transparent',
-                color: workbenchMode === 'expert' ? tokens.colors.textPrimary : tokens.colors.textSecondary,
-                borderRadius: tokens.radius,
-              }}
-              className="px-2 py-0.5 font-medium transition cursor-pointer flex items-center gap-1.5"
+              className={`switch-btn-tactile ${workbenchMode === 'expert' ? 'active' : ''}`}
               title="Expert Studio: unconstrained raw telemetry, custom sequence engineering, and deep biophysical controls"
             >
+              {workbenchMode === 'expert' && <span className="led-indicator-dot" />}
               <Layers className="w-3.5 h-3.5" />
               <span>Expert Studio</span>
             </button>
@@ -989,60 +2006,57 @@ ${epitopeRows}
         </div>
 
         {/* Right action bar: tour, calculator and dossier, files, link */}
-        <div className="flex items-center gap-x-4 gap-y-2 flex-wrap">
+        <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
           <ToolButton
-            icon={<Compass />}
+            icon={<Compass className="w-3.5 h-3.5" />}
             onClick={() => startClinicalWalkthrough('HBB')}
             title="Start the step-by-step clinical walkthrough (sickle cell HBB case)"
           >
             Clinical tour
           </ToolButton>
 
-          <div className="flex items-center gap-1.5" role="group" aria-label="Calculator and dossier">
-            <ToolButton
-              pressed={batchCalcOpen}
-              onClick={openBatchCalculator}
-              title={
-                activeTab === 'overview'
-                  ? 'Show or hide the wet-lab batch mass calculator'
-                  : 'Open the Batch tab with the wet-lab batch mass calculator'
-              }
-            >
-              Batch mass calculator
-            </ToolButton>
-            <ToolButton
-              icon={<FileText />}
-              onClick={() => setIsDossierModalOpen(true)}
-              title="Open the pre-IND regulatory technical dossier (ICH M4Q / FDA eCTD Module 3 CMC)"
-            >
-              Pre-IND dossier
-            </ToolButton>
-          </div>
-
-          <div className="flex items-center gap-1.5" role="group" aria-label="Export">
-            <span className="ctl-label" aria-hidden="true">
-              Export
-            </span>
-            <ToolButton
-              icon={fastaSaved ? <Check /> : <Download />}
-              done={fastaSaved}
-              onClick={handleExportTopFasta}
-              title="Download a multi-record FASTA (.fasta): wild-type and edited CDS, both polypeptides and the protospacer"
-            >
-              {fastaSaved ? 'FASTA saved' : 'FASTA'}
-            </ToolButton>
-            <ToolButton
-              icon={reportSaved ? <Check /> : <Download />}
-              done={reportSaved}
-              onClick={downloadDraDossier}
-              title="Download the pre-IND CMC and preclinical evaluation report as Markdown (.md)"
-            >
-              {reportSaved ? 'Report saved' : 'Pre-IND report (.md)'}
-            </ToolButton>
-          </div>
+          <ToolButton
+            pressed={batchCalcOpen}
+            onClick={openBatchCalculator}
+            title={
+              activeTab === 'overview'
+                ? 'Show or hide the wet-lab batch mass calculator'
+                : 'Open the Batch tab with the wet-lab batch mass calculator'
+            }
+          >
+            Batch mass calculator
+          </ToolButton>
 
           <ToolButton
-            icon={shareCopied ? <Check /> : <Share2 />}
+            icon={<FileText className="w-3.5 h-3.5" />}
+            onClick={() => setIsDossierModalOpen(true)}
+            title="Open the pre-IND regulatory technical dossier (ICH M4Q / FDA eCTD Module 3 CMC)"
+          >
+            Pre-IND dossier
+          </ToolButton>
+
+          <div className="h-4 w-[1px] bg-[#2E3338] mx-0.5" />
+
+          <ToolButton
+            icon={fastaSaved ? <Check className="w-3.5 h-3.5 text-[#38D399]" /> : <Download className="w-3.5 h-3.5" />}
+            done={fastaSaved}
+            onClick={handleExportTopFasta}
+            title="Download a multi-record FASTA (.fasta): wild-type and edited CDS, both polypeptides and the protospacer"
+          >
+            {fastaSaved ? 'FASTA saved' : 'FASTA'}
+          </ToolButton>
+
+          <ToolButton
+            icon={reportSaved ? <Check className="w-3.5 h-3.5 text-[#38D399]" /> : <Download className="w-3.5 h-3.5" />}
+            done={reportSaved}
+            onClick={downloadDraDossier}
+            title="Download the pre-IND CMC and preclinical evaluation report as Markdown (.md)"
+          >
+            {reportSaved ? 'Report saved' : 'Pre-IND report (.md)'}
+          </ToolButton>
+
+          <ToolButton
+            icon={shareCopied ? <Check className="w-3.5 h-3.5 text-[#38D399]" /> : <Share2 className="w-3.5 h-3.5" />}
             done={shareCopied}
             onClick={handleShareConfig}
             title={
@@ -1059,16 +2073,16 @@ ${epitopeRows}
       {/* Clinical Workflow Navigation Bar with Dedicated Modes */}
       <nav
         style={{
-          backgroundColor: tokens.colors.surface,
-          borderColor: tokens.colors.border,
+          backgroundColor: 'var(--bg-panel-header, #16181A)',
+          borderColor: 'var(--border-chassis, #2E3338)',
         }}
         className="border-b px-4 py-1.5 flex items-center justify-between gap-2 overflow-x-auto select-none shrink-0"
         aria-label="Workflow Navigation"
       >
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {(
             [
-              { id: 'overview', label: 'Panoramic Overview', icon: LayoutGrid, count: null, desc: 'Holistic multi-track view of all translation stages' },
+              { id: 'overview', label: 'Panoramic Overview', icon: LayoutGrid, count: null, desc: 'Executive Clinical Workbench — holistic multi-track view' },
               { id: 'crispr', label: '1. Base Editor', icon: Dna, count: `${processedGuides.length} guides`, desc: 'Protospacers, bystanders & BsmBI cloning oligos' },
               { id: 'lnp', label: '2. LNP Biophysics', icon: FlaskConical, count: `${biophysics.diameterNm}nm`, desc: '3D Cutaway, Henderson-Hasselbalch, CPP & SAXS' },
               { id: 'immunology', label: '3. ImmunoShield', icon: Shield, count: residualHlaRisk !== null ? `CTL ${residualHlaRisk}` : null, desc: 'South Asian HLA Class I/II de-immunization' },
@@ -1081,29 +2095,22 @@ ${epitopeRows}
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                style={{
-                  backgroundColor: isActive ? tokens.colors.surfaceSelected : 'transparent',
-                  borderColor: isActive ? '#b88644' : 'transparent',
-                  color: isActive ? tokens.colors.textPrimary : tokens.colors.textSecondary,
-                  borderRadius: tokens.radius,
-                }}
-                className={`px-3 py-1.5 text-xs font-medium border flex items-center gap-2 transition cursor-pointer hover:text-[#e8dfd1] hover:bg-[#211e1a] shrink-0 ${
-                  isActive ? 'font-semibold shadow-xs' : ''
-                }`}
+                className={`switch-btn-tactile px-3 py-1.5 text-xs ${isActive ? 'active' : ''}`}
                 title={tab.desc}
               >
+                {isActive && <span className="led-indicator-dot" />}
                 <Icon
                   className={`w-3.5 h-3.5 ${
-                    isActive ? 'text-[#b88644]' : 'text-[#70675c]'
+                    isActive ? 'text-[#38BDF8]' : 'text-[#98A1A6]'
                   }`}
                 />
-                <span>{tab.label}</span>
+                <span className={isActive ? 'text-[#EAE6DF] font-semibold' : 'text-[#98A1A6]'}>{tab.label}</span>
                 {tab.count && (
                   <span
-                    className={`text-[10px] font-mono-seq px-1.5 py-0.2 rounded ${
+                    className={`text-[10px] font-mono-seq px-1.5 py-0.2 rounded-[2px] ${
                       isActive
-                        ? 'bg-[#2a2621] text-[#e8dfd1] border border-[#3a342c]'
-                        : 'bg-[#181613] text-[#70675c]'
+                        ? 'bg-[#141618] text-[#38D399] border border-[#2E3338]'
+                        : 'bg-[#111315] text-[#646D73]'
                     }`}
                   >
                     {tab.count}
@@ -1116,19 +2123,19 @@ ${epitopeRows}
 
         {/* Guided case study launcher in navigation bar */}
         <div className="flex items-center gap-2.5 text-xs">
-          <div className="hidden md:flex items-center gap-1.5 text-[11px] text-[#70675c]">
+          <div className="hidden md:flex items-center gap-1.5 text-[11px] text-[#646D73]">
             <span>Active mode:</span>
-            <span className="text-[#d4a359] font-medium font-display">
+            <span className="text-[#F5A623] font-medium font-display">
               {workbenchMode === 'newcomer' ? 'Newcomer Guided' : 'Expert Studio'}
             </span>
           </div>
 
           <button
             onClick={() => startClinicalWalkthrough(selectedPresetId === 'TTR' ? 'TTR' : 'HBB')}
-            className="px-2 py-0.5 rounded-[2px] bg-[#b88644]/15 hover:bg-[#b88644]/30 border border-[#b88644]/40 text-[#d4a359] hover:text-[#e8dfd1] flex items-center gap-1 transition cursor-pointer text-[11px]"
+            className="tactile-btn text-[11px] py-1 px-2.5 text-[#F5A623] hover:text-[#FFFFFF]"
             title="Start interactive guided walkthrough"
           >
-            <Compass className="w-3 h-3 text-[#d4a359]" />
+            <Compass className="w-3.5 h-3.5 text-[#F5A623]" />
             <span>Tour Case Study</span>
           </button>
         </div>
@@ -1136,34 +2143,27 @@ ${epitopeRows}
 
       {/* Newcomer Onboarding Guidance Banner */}
       {workbenchMode === 'newcomer' && !dismissedNewcomerBanner && (
-        <div
-          style={{
-            backgroundColor: '#161411',
-            borderColor: '#b88644',
-            borderRadius: tokens.radius,
-          }}
-          className="mx-4 mt-3 p-3.5 border-l-4 border flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs shadow-md"
-        >
+        <div className="mx-4 mt-3 p-3.5 bg-[#16181A] border border-[#2E3338] border-l-4 border-l-[#F5A623] rounded-[2px] flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs shadow-md">
           <div className="flex items-start gap-3 flex-1">
-            <div className="w-8 h-8 rounded-[3px] bg-[#b88644]/20 border border-[#b88644]/40 text-[#d4a359] flex items-center justify-center shrink-0 mt-0.5">
+            <div className="w-8 h-8 rounded-[2px] bg-[#F5A623]/15 border border-[#F5A623]/30 text-[#F5A623] flex items-center justify-center shrink-0 mt-0.5">
               <GraduationCap className="w-4 h-4" />
             </div>
             <div className="space-y-1 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-display font-bold text-xs text-[#e8dfd1]">
+                <span className="font-display font-bold text-xs text-[#EAE6DF]">
                   Newcomer Guide: Translational Nanomedicine &amp; Precision Base Editing
                 </span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#24201b] text-[#d4a359] border border-[#3a342c] font-medium">
+                <span className="text-[10px] px-2 py-0.5 rounded-[2px] bg-[#d97706] text-white font-semibold shadow-xs border border-white/10">
                   Dedicated Newcomer Mode Active
                 </span>
               </div>
-              <p className="text-[#a69b8d] text-[11px] leading-relaxed">
-                Welcome to NanoCRISPR-3D! This platform bridges 4 translational pillars: <strong>(1) Precision CRISPR base editing</strong> without double-strand DNA breaks, <strong>(2) Biophysical lipid nanoparticle (LNP) delivery</strong> with endosomal escape (<code className="text-[#98c2cc]">CPP &ge; 1.45</code>), <strong>(3) ImmunoShield South Asian HLA de-immunization</strong>, and <strong>(4) Wet-lab microfluidic mass scaling</strong>.
+              <p className="text-[#98A1A6] text-[11px] leading-relaxed">
+                Welcome to NanoCRISPR-3D! This platform bridges 4 translational pillars: <strong>(1) Precision CRISPR base editing</strong> without double-strand DNA breaks, <strong>(2) Biophysical lipid nanoparticle (LNP) delivery</strong> with endosomal escape (<code className="text-[#38BDF8]">CPP &ge; 1.45</code>), <strong>(3) ImmunoShield South Asian HLA de-immunization</strong>, and <strong>(4) Wet-lab microfluidic mass scaling</strong>.
               </p>
               <div className="flex items-center gap-2 pt-1.5 flex-wrap">
                 <button
                   onClick={() => startClinicalWalkthrough('HBB')}
-                  className="px-2.5 py-1 text-xs font-semibold rounded-[2px] bg-[#0f766e] hover:bg-[#115e59] text-white flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                  className="tactile-btn text-xs bg-[#0f766e] hover:bg-[#115e59] text-white border-teal-600"
                 >
                   <Compass className="w-3.5 h-3.5" />
                   <span>Launch Guided Web Tour (6 Steps)</span>
@@ -1175,7 +2175,7 @@ ${epitopeRows}
                     setSelectedGuideId(null);
                     setActiveTab('crispr');
                   }}
-                  className="px-2.5 py-1 text-[11px] font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#e8dfd1] hover:text-[#d4a359] transition cursor-pointer flex items-center gap-1"
+                  className="tactile-btn text-[11px]"
                 >
                   <span>Case 1: Sickle Cell (HBB E6V &rarr; HbG)</span>
                 </button>
@@ -1186,13 +2186,13 @@ ${epitopeRows}
                     setSelectedGuideId(null);
                     setActiveTab('lnp');
                   }}
-                  className="px-2.5 py-1 text-[11px] font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] text-[#e8dfd1] hover:text-[#d4a359] transition cursor-pointer flex items-center gap-1"
+                  className="tactile-btn text-[11px]"
                 >
                   <span>Case 2: Amyloidosis (NTLA-2001 Benchmark)</span>
                 </button>
                 <button
                   onClick={() => setWorkbenchMode('expert')}
-                  className="text-[11px] text-[#70675c] hover:text-[#a69b8d] underline ml-2 transition cursor-pointer"
+                  className="text-[11px] text-[#646D73] hover:text-[#98A1A6] underline ml-2 transition cursor-pointer"
                 >
                   Switch to Expert Studio
                 </button>
@@ -1202,7 +2202,7 @@ ${epitopeRows}
 
           <button
             onClick={() => setDismissedNewcomerBanner(true)}
-            className="text-[#70675c] hover:text-[#e8dfd1] p-1 transition cursor-pointer shrink-0 self-start md:self-center"
+            className="text-[#646D73] hover:text-[#EAE6DF] p-1 transition cursor-pointer shrink-0 self-start md:self-center"
             title="Dismiss newcomer guide banner"
             aria-label="Dismiss newcomer guide banner"
           >
@@ -1213,34 +2213,21 @@ ${epitopeRows}
 
       {/* Custom Sequence Input Drawer (when active) */}
       {isCustomMode && (
-        <div
-          style={{
-            backgroundColor: tokens.colors.surface,
-            borderColor: tokens.colors.border,
-          }}
-          className="border-b px-4 py-3 flex flex-col gap-2.5"
-        >
+        <div className="border-b border-[#2E3338] bg-[#1E2124] px-4 py-3 flex flex-col gap-2.5">
           <div className="flex items-center justify-between">
-            <span className="font-display font-semibold text-xs tracking-tight text-[#e8dfd1]">
-              Custom target sequence configuration
+            <span className="font-display font-semibold text-xs tracking-tight text-[#EAE6DF]">
+              Custom Target Sequence Configuration
             </span>
-            <span className="text-[11px] text-[#70675c]">
+            <span className="text-[11px] text-[#646D73]">
               Dual-strand scanning will search both (+) and (-) orientations
             </span>
           </div>
 
           {/* Tier 2: Live Biological Database Search Bar */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surfaceRaised,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="p-2.5 border flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs"
-          >
+          <div className="p-2.5 bg-[#16181A] border border-[#2E3338] rounded-[2px] flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs">
             <div className="flex flex-col md:flex-row items-start md:items-center gap-2 flex-1">
-              <span className="font-semibold text-[11px] text-[#e8dfd1] flex items-center gap-1.5 shrink-0">
-                <Globe className="w-3.5 h-3.5 text-[#4d828f]" />
+              <span className="font-semibold text-[11px] text-[#EAE6DF] flex items-center gap-1.5 shrink-0">
+                <Globe className="w-3.5 h-3.5 text-[#38BDF8]" />
                 Ensembl Live Lookup:
               </span>
               <div className="flex items-center gap-1.5 w-full md:w-auto">
@@ -1252,30 +2239,21 @@ ${epitopeRows}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleEnsemblGeneSearch();
                   }}
-                  style={{
-                    backgroundColor: tokens.colors.canvas,
-                    borderColor: tokens.colors.border,
-                    borderRadius: tokens.radius,
-                  }}
-                  className="px-2 py-1 border text-xs font-mono text-[#e8dfd1] outline-none w-36 uppercase"
+                  className="px-2 py-1 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] text-xs font-mono-seq text-[#EAE6DF] outline-none w-36 uppercase focus:border-[#38BDF8]"
                 />
                 <button
                   onClick={() => handleEnsemblGeneSearch()}
                   disabled={isSearchingGene}
-                  style={{
-                    backgroundColor: tokens.colors.accent,
-                    borderRadius: tokens.radius,
-                  }}
-                  className="px-2.5 py-1 text-xs font-semibold text-white hover:brightness-110 transition cursor-pointer flex items-center gap-1 disabled:opacity-50 shrink-0"
+                  className="tactile-btn text-xs"
                 >
-                  <Search className="w-3 h-3" />
-                  {isSearchingGene ? 'Querying...' : 'Fetch CDS'}
+                  <Search className="w-3 h-3 text-[#38BDF8]" />
+                  <span>{isSearchingGene ? 'Querying...' : 'Fetch CDS'}</span>
                 </button>
               </div>
 
               {/* Preset Chips */}
               <div className="flex items-center gap-1 flex-wrap text-[10px]">
-                <span className="text-[#70675c]">Quick load:</span>
+                <span className="text-[#646D73]">Quick load:</span>
                 {['CFTR', 'HEXA', 'LDLR', 'DMD', 'HBA1'].map((sym) => (
                   <button
                     key={sym}
@@ -1283,11 +2261,7 @@ ${epitopeRows}
                       setGeneSearchQuery(sym);
                       handleEnsemblGeneSearch(sym);
                     }}
-                    style={{
-                      borderColor: tokens.colors.border,
-                      backgroundColor: tokens.colors.canvas,
-                    }}
-                    className="px-1.5 py-0.5 rounded border text-[#a69b8d] hover:text-[#e8dfd1] hover:border-[#4d828f] transition cursor-pointer"
+                    className="px-1.5 py-0.5 rounded-[2px] border border-[#2E3338] bg-[#111315] text-[#98A1A6] hover:text-[#EAE6DF] hover:border-[#38BDF8] transition cursor-pointer"
                   >
                     {sym}
                   </button>
@@ -1296,8 +2270,8 @@ ${epitopeRows}
             </div>
 
             {/* dbSNP / ClinVar Variant Lookup */}
-            <div className="flex items-center gap-1.5 border-t md:border-t-0 md:border-l pt-2 md:pt-0 md:pl-3 border-[#2e2923] shrink-0">
-              <span className="text-[11px] text-[#a69b8d]">SAS SNP:</span>
+            <div className="flex items-center gap-1.5 border-t md:border-t-0 md:border-l pt-2 md:pt-0 md:pl-3 border-[#2E3338] shrink-0">
+              <span className="text-[11px] text-[#98A1A6]">SAS SNP:</span>
               <input
                 type="text"
                 placeholder="rs10768683"
@@ -1306,22 +2280,12 @@ ${epitopeRows}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') handleVariantSearch();
                 }}
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="px-2 py-1 border text-xs font-mono text-[#e8dfd1] outline-none w-28"
+                className="px-2 py-1 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] text-xs font-mono-seq text-[#EAE6DF] outline-none w-28 focus:border-[#38BDF8]"
               />
               <button
                 onClick={handleVariantSearch}
                 disabled={isSearchingVariant}
-                style={{
-                  backgroundColor: tokens.colors.surface,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="px-2 py-1 text-xs font-medium text-[#e8dfd1] border hover:border-[#4d828f] transition cursor-pointer disabled:opacity-50"
+                className="tactile-btn text-xs py-1 px-2 text-[#EAE6DF] disabled:opacity-50"
               >
                 {isSearchingVariant ? '...' : 'Verify'}
               </button>
@@ -1329,20 +2293,20 @@ ${epitopeRows}
           </div>
 
           {geneSearchError && (
-            <div className="text-[11px] text-[#cc6b5a] bg-[#2a1b18] border border-[#522923] px-2.5 py-1 rounded">
+            <div className="text-[11px] text-[#FF6B6B] bg-[#2A1718] border border-[#522923] px-2.5 py-1 rounded-[2px]">
               {geneSearchError}
             </div>
           )}
 
           {variantSearchError && (
-            <div className="text-[11px] text-[#cc6b5a] bg-[#2a1b18] border border-[#522923] px-2.5 py-1 rounded">
+            <div className="text-[11px] text-[#FF6B6B] bg-[#2A1718] border border-[#522923] px-2.5 py-1 rounded-[2px]">
               {variantSearchError}
             </div>
           )}
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
             <div className="md:col-span-2">
-              <label className="text-[11px] text-[#a69b8d] block mb-1">
+              <label className="text-[11px] text-[#98A1A6] block mb-1">
                 Coding DNA sequence (5&apos; → 3&apos;)
               </label>
               <textarea
@@ -1354,17 +2318,12 @@ ${epitopeRows}
                     sequence: e.target.value.toUpperCase().replace(/[^ATCGN]/g, ''),
                   })
                 }
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="w-full p-2 border font-mono-seq text-[11px] text-[#e8dfd1] outline-none focus:border-[#4d828f]"
+                className="w-full p-2 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] font-mono-seq text-[11px] text-[#EAE6DF] outline-none focus:border-[#38BDF8]"
               />
             </div>
 
             <div>
-              <label className="text-[11px] text-[#a69b8d] block mb-1">
+              <label className="text-[11px] text-[#98A1A6] block mb-1">
                 Target nucleotide (1-based index)
               </label>
               <input
@@ -1381,15 +2340,10 @@ ${epitopeRows}
                     ),
                   })
                 }
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="w-full p-1.5 border font-mono-seq text-xs text-[#e8dfd1] outline-none"
+                className="w-full p-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] font-mono-seq text-xs text-[#EAE6DF] outline-none"
               />
 
-              <label className="text-[11px] text-[#a69b8d] block mt-2 mb-1">
+              <label className="text-[11px] text-[#98A1A6] block mt-2 mb-1">
                 Base editor architecture
               </label>
               <select
@@ -1402,12 +2356,7 @@ ${epitopeRows}
                     editorType: val,
                   }));
                 }}
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="w-full p-1.5 border text-xs text-[#e8dfd1] outline-none"
+                className="w-full p-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] text-xs text-[#EAE6DF] outline-none"
               >
                 {Object.entries(BASE_EDITOR_DEFINITIONS).map(([editorType, definition]) => (
                   <option key={editorType} value={editorType}>
@@ -1416,7 +2365,7 @@ ${epitopeRows}
                 ))}
               </select>
 
-              <label className="text-[11px] text-[#a69b8d] block mt-2 mb-1">
+              <label className="text-[11px] text-[#98A1A6] block mt-2 mb-1">
                 Cas9 PAM-recognition variant
               </label>
               <select
@@ -1429,12 +2378,7 @@ ${epitopeRows}
                     pamVariant: val,
                   }));
                 }}
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="w-full p-1.5 border text-xs text-[#e8dfd1] outline-none"
+                className="w-full p-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] text-xs text-[#EAE6DF] outline-none"
               >
                 {Object.entries(PAM_VARIANT_DEFINITIONS).map(([pamVariant, definition]) => (
                   <option key={pamVariant} value={pamVariant}>
@@ -1445,7 +2389,7 @@ ${epitopeRows}
             </div>
 
             <div>
-              <label className="text-[11px] text-[#a69b8d] block mb-1">
+              <label className="text-[11px] text-[#98A1A6] block mb-1">
                 Target organ / tissue
               </label>
               <select
@@ -1456,19 +2400,14 @@ ${epitopeRows}
                     targetOrgan: e.target.value as 'Liver' | 'Bone Marrow (HSPC)' | 'Lung',
                   })
                 }
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="w-full p-1.5 border text-xs text-[#e8dfd1] outline-none"
+                className="w-full p-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] text-xs text-[#EAE6DF] outline-none"
               >
                 <option value="Liver">Liver (Hepatocytes)</option>
                 <option value="Bone Marrow (HSPC)">Bone Marrow (HSPC)</option>
                 <option value="Lung">Lung (Endothelium)</option>
               </select>
 
-              <label className="text-[11px] text-[#a69b8d] block mt-2 mb-1">
+              <label className="text-[11px] text-[#98A1A6] block mt-2 mb-1">
                 Optional SAS SNP marker (1-based)
               </label>
               <input
@@ -1485,12 +2424,7 @@ ${epitopeRows}
                     ),
                   })
                 }
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="w-full p-1.5 border font-mono-seq text-xs text-[#e8dfd1] outline-none"
+                className="w-full p-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] font-mono-seq text-xs text-[#EAE6DF] outline-none"
               />
             </div>
           </div>
@@ -1498,25 +2432,154 @@ ${epitopeRows}
       )}
 
       {/* Main Workstation Layout */}
-      <main className={`flex-1 w-full max-w-[1920px] mx-auto p-3 grid grid-cols-1 lg:grid-cols-12 gap-3 ${isDossierModalOpen ? 'print:hidden' : ''}`}>
-        {/* LEFT WORKSTATION: GENOMICS & BASE EDITING EVALUATION */}
-        {(activeTab === 'overview' || activeTab === 'crispr' || activeTab === 'immunology') && (
-          <section className={`${activeTab === 'overview' ? 'lg:col-span-7' : 'lg:col-span-12'} flex flex-col gap-3`}>
-            {/* Newcomer Dedicated Mode Guidance Callout */}
-            {workbenchMode === 'newcomer' && activeTab === 'overview' && (
-              <NewcomerStageTip
-                stage="Panoramic Overview"
-                title="Translational Multi-Pillar Pipeline"
-                subtitle="Explore the end-to-end preclinical nanomedicine workflow connecting precision base editing, delivery biophysics, Cas9 de-immunization, and microfluidic batch formulation. Switch between dedicated stage tabs above for focused deep dives."
-                badgeText="4 Preclinical Pillars"
-                bulletPoints={[
-                  "1. Precision Base Editing without double-strand DNA breaks",
-                  "2. LNP Delivery with endosomal hexagonal (HII) fusion",
-                  "3. ImmunoShield South Asian HLA de-immunization",
-                ]}
+      <main className={`flex-1 w-full max-w-[1920px] mx-auto p-3 ${isDossierModalOpen ? 'print:hidden' : ''}`}>
+        {/* TAB 0: PANORAMIC OVERVIEW (Executive Clinical Workbench - Fits cleanly without endless table scrolling) */}
+        {activeTab === 'overview' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+            {/* Left Column: Target header, Sequence track, Top 3 guides summary, ImmunoShield status */}
+            <div className="lg:col-span-7 flex flex-col gap-3">
+              {workbenchMode === 'newcomer' && (
+                <NewcomerStageTip
+                  stage="Panoramic Overview"
+                  title="Translational Multi-Pillar Pipeline"
+                  subtitle="Explore the end-to-end preclinical nanomedicine workflow connecting precision base editing, delivery biophysics, Cas9 de-immunization, and microfluidic batch formulation. Switch between dedicated stage tabs above for focused deep dives."
+                  badgeText="4 Preclinical Pillars"
+                  bulletPoints={[
+                    "1. Precision Base Editing without double-strand DNA breaks",
+                    "2. LNP Delivery with endosomal hexagonal (HII) fusion",
+                    "3. ImmunoShield South Asian HLA de-immunization",
+                  ]}
+                />
+              )}
+              {renderTargetHeader()}
+              <SequenceWorkbench
+                title={`${activePreset.symbol} coding sequence`}
+                sequence={activePreset.sequence}
+                editor={workbenchEditor}
+                guides={workbenchGuides}
+                snps={workbenchSnps}
+                targetPos={activePreset.mutationIndex}
+                selectedGuideId={selectedGuide?.id ?? null}
+                onSelectGuide={setSelectedGuideId}
+                audit="summary"
               />
-            )}
-            {workbenchMode === 'newcomer' && activeTab === 'crispr' && (
+              {renderTop3GuidesCard()}
+              {renderImmunoShieldSummaryStrip()}
+            </div>
+
+            {/* Right Column: 3D LNP cutaway, 6-card biophysics telemetry, pH ionization curve, and SORT biodistribution */}
+            <div className="lg:col-span-5 flex flex-col gap-2">
+              <NanoViewport3D formulation={activeFormulation} biophysics={biophysics} />
+              {renderBiophysicalCards()}
+              <HendersonHasselbalchCurve lipidPka={lnpForm.lipidPka} />
+              {renderOrganBiodistribution()}
+
+              {/* Wet-Lab Batch Preparation Mass Calculator (Toggleable accordion in Overview) */}
+              {showBatchCalc && (
+                <div className="instrument-panel">
+                  <div className="instrument-header">
+                    <div className="instrument-header-title">
+                      <span className="instrument-status-dot dot-amber" />
+                      <span>WET-LAB BATCH PREPARATION CALCULATOR</span>
+                    </div>
+                    <span className="text-[11px] text-[#646D73]">Microfluidic mixing protocol</span>
+                  </div>
+
+                  <div className="p-3 bg-[#1E2124] flex flex-col gap-3 text-xs">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] text-[#98A1A6] block mb-1">
+                          Target batch volume (mL)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={500}
+                          step={1}
+                          value={batchVolumeMl}
+                          onChange={(e) =>
+                            setBatchVolumeMl(Math.max(0.1, parseFloat(e.target.value) || 10))
+                          }
+                          className="w-full p-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] font-mono-seq text-xs text-[#EAE6DF] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-[#98A1A6] block mb-1">
+                          mRNA concentration (mg/mL)
+                        </label>
+                        <input
+                          type="number"
+                          min={0.1}
+                          max={10}
+                          step={0.1}
+                          value={batchMrnaConcMgMl}
+                          onChange={(e) =>
+                            setBatchMrnaConcMgMl(Math.max(0.05, parseFloat(e.target.value) || 1))
+                          }
+                          className="w-full p-1.5 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] font-mono-seq text-xs text-[#EAE6DF] outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto pt-1">
+                      <table className="w-full border-collapse text-left text-xs">
+                        <thead className="bg-[#16181A] text-[#98A1A6] text-[11px] border-b border-[#2E3338]">
+                          <tr>
+                            <th className="py-1 px-1.5 font-medium">Component</th>
+                            <th className="py-1 px-1.5 font-medium text-right font-mono-seq">Molar %</th>
+                            <th className="py-1 px-1.5 font-medium text-right font-mono-seq">Mass to weigh</th>
+                            <th className="py-1 px-1.5 font-medium text-right font-mono-seq">Conc (mM)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b border-[#2E3338] text-[11px]">
+                            <td className="py-1 px-1.5 font-semibold text-[#EAE6DF]">mRNA payload</td>
+                            <td className="py-1 px-1.5 text-right font-mono-seq text-[#98A1A6]">—</td>
+                            <td className="py-1 px-1.5 text-right font-mono-seq font-semibold text-[#EAE6DF]">
+                              {batchCalculation.totalMrnaMassMg} mg
+                            </td>
+                            <td className="py-1 px-1.5 text-right font-mono-seq text-[#98A1A6]">
+                              {batchMrnaConcMgMl.toFixed(2)} mg/mL
+                            </td>
+                          </tr>
+                          {batchCalculation.components.map((c, i) => (
+                            <tr key={i} className="border-b border-[#2E3338] text-[11px]">
+                              <td className="py-1 px-1.5 text-[#EAE6DF]">{c.name}</td>
+                              <td className="py-1 px-1.5 text-right font-mono-seq text-[#98A1A6]">
+                                {c.molarPct.toFixed(1)}%
+                              </td>
+                              <td className="py-1 px-1.5 text-right font-mono-seq font-medium text-[#EAE6DF]">
+                                {c.massMg} mg
+                              </td>
+                              <td className="py-1 px-1.5 text-right font-mono-seq text-[#98A1A6]">
+                                {c.molarConcMm} mM
+                              </td>
+                            </tr>
+                          ))}
+                          <tr className="text-[11px] font-semibold text-[#EAE6DF] bg-[#16181A]">
+                            <td className="py-1 px-1.5">Total Lipids</td>
+                            <td className="py-1 px-1.5 text-right font-mono-seq">100.0%</td>
+                            <td className="py-1 px-1.5 text-right font-mono-seq text-[#F5A623]">
+                              {batchCalculation.totalLipidMassMg} mg
+                            </td>
+                            <td className="py-1 px-1.5 text-right font-mono-seq text-[#98A1A6]">
+                              Ratio: {(batchCalculation.totalLipidMassMg / batchCalculation.totalMrnaMassMg).toFixed(1)}:1 w/w
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 1: 1. BASE EDITOR (Full-width detailed protospacer discovery, oligo cloning & bystander audits) */}
+        {activeTab === 'crispr' && (
+          <div className="flex flex-col gap-3">
+            {workbenchMode === 'newcomer' && (
               <NewcomerStageTip
                 stage="Stage 1: Base Editing"
                 title="Precision Deamination & Protospacer Discovery"
@@ -1529,7 +2592,59 @@ ${epitopeRows}
                 ]}
               />
             )}
-            {workbenchMode === 'newcomer' && activeTab === 'immunology' && (
+            {renderTargetHeader()}
+            <SequenceWorkbench
+              title={`${activePreset.symbol} coding sequence`}
+              sequence={activePreset.sequence}
+              editor={workbenchEditor}
+              guides={workbenchGuides}
+              snps={workbenchSnps}
+              targetPos={activePreset.mutationIndex}
+              selectedGuideId={selectedGuide?.id ?? null}
+              onSelectGuide={setSelectedGuideId}
+              audit="full"
+            />
+            {renderProtospacerTable()}
+            {renderCloningAndBystandersSideBySide()}
+          </div>
+        )}
+
+        {/* TAB 2: 2. LNP BIOPHYSICS (Dedicated two-column: Left 3D + telemetry; Right formulations & curve) */}
+        {activeTab === 'lnp' && (
+          <div className="flex flex-col gap-3">
+            {workbenchMode === 'newcomer' && (
+              <NewcomerStageTip
+                stage="Stage 2: LNP Delivery"
+                title="Lipid Nanoparticle Biophysics & Endosomal Escape"
+                subtitle="Formulate 4-component LNPs (Ionizable Lipid, DSPC, Cholesterol, PEG-Lipid). Ionizable lipids remain near-neutral at physiological blood pH 7.4 to evade immune clearance, but undergo protonation in acidic endosomes (pH 5.5). This induces the Israelachvili Critical Packing Parameter (CPP ≥ 1.45) transition into the inverted hexagonal (HII) phase, fusing with endosomal membranes to release mRNA into the cytoplasm."
+                badgeText="Israelachvili CPP ≥ 1.45 Fusion"
+                bulletPoints={[
+                  "Ionizable lipid pKa 6.0-6.5 balances blood circulation and endosomal escape",
+                  "Israelachvili CPP >= 1.45 triggers non-bilayer hexagonal membrane disruption",
+                  "ApoE-mediated receptor uptake drives targeted hepatic/endothelial biodistribution",
+                ]}
+              />
+            )}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+              {/* Left Column: 3D Cutaway + Biophysical Properties */}
+              <div className="lg:col-span-6 flex flex-col gap-3">
+                <NanoViewport3D formulation={activeFormulation} biophysics={biophysics} />
+                {renderBiophysicalCards()}
+              </div>
+
+              {/* Right Column: LNP Formulation Panel + Biodistribution */}
+              <div className="lg:col-span-6 flex flex-col gap-3">
+                <LnpFormulationPanel form={lnpForm} onChange={setLnpForm} biophysics={biophysics} />
+                {renderOrganBiodistribution()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: 3. IMMUNOSHIELD (Full-width de-immunization matrix & HLA allele selector) */}
+        {activeTab === 'immunology' && (
+          <div className="flex flex-col gap-3">
+            {workbenchMode === 'newcomer' && (
               <NewcomerStageTip
                 stage="Stage 3: ImmunoShield-DRA"
                 title="South Asian HLA Cas9 De-Immunization"
@@ -1542,1481 +2657,306 @@ ${epitopeRows}
                 ]}
               />
             )}
-          {/* Target Locus Metadata Bar */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24201b] pb-2 mb-2">
-              <div>
-                <span className="font-semibold text-sm text-[#e8dfd1] mr-2">
-                  {activePreset.symbol}
-                </span>
-                <span className="text-[#a69b8d] text-xs">{activePreset.name}</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2.5 text-xs text-[#a69b8d]">
-                <span>
-                  Target tissue:{' '}
-                  <strong className="text-[#e8dfd1] font-medium">
-                    {activePreset.targetOrgan}
-                  </strong>
-                </span>
-                <span>•</span>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <span>Editor:</span>
-                  <select
-                    value={activePreset.editorType}
-                    onChange={(e) => {
-                      const val = e.target.value as BaseEditorType;
-                      setEditorOverride(val);
-                      if (isCustomMode) {
-                        setCustomPreset((prev) => ({ ...prev, editorType: val }));
-                      }
-                      setSelectedGuideId(null);
-                    }}
-                    style={{
-                      backgroundColor: tokens.colors.canvas,
-                      borderColor: tokens.colors.border,
-                      borderRadius: tokens.radius,
-                    }}
-                    className="px-2 py-0.5 border text-xs text-[#e8dfd1] outline-none cursor-pointer hover:border-[#4d828f] focus:border-[#4d828f]"
-                    title="Switch base editor architecture (ABE8e, ABE9 narrow window, BE4max)"
-                  >
-                    {Object.keys(BASE_EDITOR_DEFINITIONS).map((ed) => (
-                      <option key={ed} value={ed}>
-                        {ed}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <span>•</span>
-                <label className="flex items-center gap-1.5 cursor-pointer">
-                  <span>PAM:</span>
-                  <select
-                    value={activePamVariant}
-                    onChange={(e) => {
-                      const val = e.target.value as PamVariant;
-                      setPamOverride(val);
-                      if (isCustomMode) {
-                        setCustomPreset((prev) => ({ ...prev, pamVariant: val }));
-                      }
-                      setSelectedGuideId(null);
-                    }}
-                    style={{
-                      backgroundColor: tokens.colors.canvas,
-                      borderColor: tokens.colors.border,
-                      borderRadius: tokens.radius,
-                    }}
-                    className="px-2 py-0.5 border text-xs text-[#e8dfd1] outline-none cursor-pointer hover:border-[#4d828f] focus:border-[#4d828f]"
-                    title="Switch Cas9 PAM recognition variant (SpCas9, SpCas9-NG, SpRY)"
-                  >
-                    {Object.entries(PAM_VARIANT_DEFINITIONS).map(([pamKey, pamDef]) => (
-                      <option key={pamKey} value={pamKey}>
-                        {pamDef.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1 text-xs">
-              <div className="text-[#a69b8d] flex flex-wrap gap-x-4 gap-y-1">
-                <span>
-                  Clinical indication:{' '}
-                  <span className="text-[#e8dfd1] font-medium">{activePreset.disease}</span>
-                </span>
-                <span>
-                  PAM mode:{' '}
-                  <span className="text-[#e8dfd1] font-mono-seq">
-                    {activePamDefinition.recognition}
-                  </span>
-                </span>
-                <span>
-                  Deaminase window:{' '}
-                  <span className="text-[#e8dfd1] font-mono-seq">
-                    spacer pos {editorWindowLabel}
-                  </span>
-                </span>
-              </div>
-              <p className="text-[#70675c] text-[11px] mt-0.5 leading-relaxed">
-                {activePreset.clinicalNote}
-              </p>
-            </div>
+            {renderTargetHeader()}
+            {renderImmunoShieldFullModule()}
           </div>
+        )}
 
-          {/* CRISPR Base Editing Pipeline (Sequence Viewer, Protospacers & Bystanders) */}
-          {(activeTab === 'overview' || activeTab === 'crispr') && (
-            <>
-          {/* Sequence workbench: ruler, codons, edit outcome, guides and variants on one axis */}
-          <SequenceWorkbench
-            title={`${activePreset.symbol} coding sequence`}
-            sequence={activePreset.sequence}
-            editor={workbenchEditor}
-            guides={workbenchGuides}
-            snps={workbenchSnps}
-            targetPos={activePreset.mutationIndex}
-            selectedGuideId={selectedGuide?.id ?? null}
-            onSelectGuide={setSelectedGuideId}
-            audit="summary"
-          />
+        {/* TAB 4: 4. BATCH & DOSSIER (Full-width microfluidic batch calculation & pre-IND technical dossier) */}
+        {activeTab === 'batch' && (
+          <div className="flex flex-col gap-3">
+            {workbenchMode === 'newcomer' && (
+              <NewcomerStageTip
+                stage="Stage 4: Wet-Lab Batch & CMC Dossier"
+                title="Microfluidic Mass Scaling, Commercial Oligo Ordering & Regulatory Technical Dossier"
+                subtitle="Translate cellular-scale dosages into physical milligram quantities of lipid and mRNA for microfluidic synthesis. Download commercial synthesis sheets formatted for IDT and GenScript, and launch the Pre-IND Regulatory Technical Dossier adhering to ICH M4Q / FDA eCTD Module 3 (CMC) standards."
+                badgeText="Microfluidic Dosing & FDA eCTD Module 3 CMC"
+                bulletPoints={[
+                  "Calculate exact masses of mRNA and all 4 lipids for microfluidic mixing",
+                  "Export 1-click IDT and GenScript CSV bulk synthesis order sheets",
+                  "Review formal ICH M4Q / FDA eCTD Module 3 Pre-IND Dossier with release criteria",
+                ]}
+              />
+            )}
+            {renderTargetHeader()}
 
-          {/* Dual-Strand Protospacer Candidate Guides Table */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3 flex flex-col gap-2.5"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Discovered protospacers ({processedGuides.length} candidates)
-                </h2>
-                <span className="text-[11px] text-[#70675c]">
-                  Dual-strand (+) and (-) search
+            {/* Wet-Lab Batch Preparation Mass Calculator (Full Width) */}
+            <div className="instrument-panel">
+              <div className="instrument-header">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="instrument-status-dot dot-amber" />
+                  <h2 className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+                    Wet-lab microfluidic batch preparation calculator
+                  </h2>
+                  <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-[2px] bg-[#d97706] text-white shadow-xs border border-white/10">
+                    Flow Ratio 3:1 (Aqueous:Ethanol)
+                  </span>
+                </div>
+                <span className="text-[11px] text-[#646D73]">
+                  Physical component mass requirements for NanoAssemblr / microfluidic mixer
                 </span>
               </div>
 
-              {/* Filtering Controls */}
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <div className="flex items-center gap-1 text-[#a69b8d]">
-                  <span>Strand:</span>
-                  <select
-                    value={filterStrand}
-                    onChange={(e) => setFilterStrand(e.target.value as any)}
-                    style={{
-                      backgroundColor: tokens.colors.canvas,
-                      borderColor: tokens.colors.border,
-                      borderRadius: tokens.radius,
-                    }}
-                    className="p-1 border text-xs text-[#e8dfd1] outline-none"
-                  >
-                    <option value="all">All strands (+/-)</option>
-                    <option value="+">Sense (+) only</option>
-                    <option value="-">Antisense (-) only</option>
-                  </select>
+              <div className="p-3.5 bg-[#1E2124] flex flex-col gap-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  <div>
+                    <label className="text-[11px] text-[#98A1A6] block mb-1">
+                      Target batch volume (mL)
+                    </label>
+                    <input
+                      type="number"
+                      min={0.5}
+                      max={1000}
+                      step={1}
+                      value={batchVolumeMl}
+                      onChange={(e) =>
+                        setBatchVolumeMl(Math.max(0.1, parseFloat(e.target.value) || 10))
+                      }
+                      className="w-full p-2 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] font-mono-seq text-xs text-[#EAE6DF] outline-none focus:border-[#38BDF8]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-[#98A1A6] block mb-1">
+                      mRNA concentration (mg/mL)
+                    </label>
+                    <input
+                      type="number"
+                      min={0.05}
+                      max={20}
+                      step={0.1}
+                      value={batchMrnaConcMgMl}
+                      onChange={(e) =>
+                        setBatchMrnaConcMgMl(Math.max(0.05, parseFloat(e.target.value) || 1))
+                      }
+                      className="w-full p-2 bg-[#0A0C0E] border border-[#2E3338] rounded-[2px] font-mono-seq text-xs text-[#EAE6DF] outline-none focus:border-[#38BDF8]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-[#98A1A6] block mb-1">
+                      N/P Charge Ratio
+                    </label>
+                    <div className="p-2 border border-[#2E3338] rounded-[2px] bg-[#0A0C0E] font-mono-seq text-xs text-[#EAE6DF] flex items-center justify-between">
+                      <span>{lnpForm.npRatio.toFixed(1)}:1</span>
+                      <span className="text-[10px] text-[#646D73]">Amine : Phosphate</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-[#98A1A6] block mb-1">
+                      Total Lipid:mRNA Ratio
+                    </label>
+                    <div className="p-2 border border-[#2E3338] rounded-[2px] bg-[#0A0C0E] font-mono-seq text-xs text-[#EAE6DF] flex items-center justify-between">
+                      <span>{(batchCalculation.totalLipidMassMg / batchCalculation.totalMrnaMassMg).toFixed(1)}:1 w/w</span>
+                      <span className="text-[10px] text-[#38D399]">Clinical Standard</span>
+                    </div>
+                  </div>
                 </div>
 
-                <label className="flex items-center gap-1 cursor-pointer text-[#a69b8d]">
-                  <input
-                    type="checkbox"
-                    checked={preferredPamOnly}
-                    onChange={(e) => setPreferredPamOnly(e.target.checked)}
-                    className="accent-[#4d828f]"
-                  />
-                  <span>{activePamDefinition.preferredPamLabel}</span>
-                </label>
-
-                <label className="flex items-center gap-1 cursor-pointer text-[#a69b8d]">
-                  <input
-                    type="checkbox"
-                    checked={hideSnpCollisions}
-                    onChange={(e) => setHideSnpCollisions(e.target.checked)}
-                    className="accent-[#4d828f]"
-                  />
-                  <span>Exclude SAS SNP collisions</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Candidates Table */}
-            <div className="overflow-x-auto max-h-[300px] border border-[#24201b] rounded-[2px]">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead
-                  style={{ backgroundColor: tokens.colors.surfaceRaised }}
-                  className="sticky top-0 z-10 text-[#a69b8d] text-[11px] border-b border-[#332e27]"
-                >
-                  <tr>
-                    <th
-                      className="py-1.5 px-2 font-medium cursor-pointer hover:text-[#e8dfd1]"
-                      onClick={() => handleSort('id')}
-                    >
-                      Guide ID
-                    </th>
-                    <th
-                      className="py-1.5 px-2 font-medium cursor-pointer hover:text-[#e8dfd1]"
-                      onClick={() => handleSort('strand')}
-                    >
-                      Strand
-                    </th>
-                    <th className="py-1.5 px-2 font-medium">Protospacer (5&apos; → 3&apos;)</th>
-                    <th
-                      className="py-1.5 px-2 font-medium cursor-pointer hover:text-[#e8dfd1]"
-                      onClick={() => handleSort('pam')}
-                    >
-                      PAM
-                    </th>
-                    <th
-                      className="py-1.5 px-2 font-medium text-right cursor-pointer hover:text-[#e8dfd1]"
-                      onClick={() => handleSort('gcContent')}
-                    >
-                      GC%
-                    </th>
-                    <th
-                      className="py-1.5 px-2 font-medium text-right cursor-pointer hover:text-[#e8dfd1]"
-                      onClick={() => handleSort('CompositeScore')}
-                    >
-                      Score
-                    </th>
-                    <th className="py-1.5 px-2 font-medium">Bystanders</th>
-                    <th className="py-1.5 px-2 font-medium">Verdict</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {processedGuides.map((guide, idx) => {
-                    const isSelected = selectedGuide?.id === guide.id;
-                    const verdictColor = getVerdictStatusColor(guide.verdict);
-
-                    return (
-                      <tr
-                        key={guide.id}
-                        onClick={() => setSelectedGuideId(guide.id)}
-                        style={{
-                          backgroundColor: isSelected
-                            ? tokens.colors.surfaceSelected
-                            : idx % 2 === 0
-                            ? 'transparent'
-                            : 'rgba(25, 23, 20, 0.4)',
-                          borderColor: tokens.colors.borderMuted,
-                        }}
-                        className={`border-b cursor-pointer transition text-[11px] hover:bg-[#2a2621] ${
-                          isSelected ? 'font-medium' : ''
-                        }`}
-                      >
-                        <td className="py-1.5 px-2 font-mono-seq text-[#e8dfd1]">
-                          <span className="flex items-center gap-1.5">
-                            {isSelected && (
-                              <span
-                                style={{ backgroundColor: tokens.colors.accent }}
-                                className="w-1.5 h-1.5 rounded-full"
-                              />
-                            )}
-                            {guide.id}
-                          </span>
+                {/* Mass & Concentration Breakdown Table */}
+                <div className="overflow-x-auto pt-1">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead className="bg-[#16181A] text-[#98A1A6] text-[11px] border-b border-[#2E3338]">
+                      <tr>
+                        <th className="py-2 px-2.5 font-medium">Component</th>
+                        <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Molar %</th>
+                        <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Mass to Weigh (mg)</th>
+                        <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Concentration (mM)</th>
+                        <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Phase / Role</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-[#2E3338] text-[11px]">
+                        <td className="py-2 px-2.5 font-semibold text-[#EAE6DF]">
+                          mRNA Payload (Base Editor &amp; sgRNA)
                         </td>
-                        <td className="py-1.5 px-2 font-mono-seq">
-                          <span
-                            className={
-                              guide.strand === '+' ? 'text-[#73a880]' : 'text-[#6699a8]'
-                            }
-                          >
-                            {guide.strand === '+' ? '(+) Sense' : '(-) Antisense'}
-                          </span>
+                        <td className="py-2 px-2.5 text-right font-mono-seq text-[#98A1A6]">—</td>
+                        <td className="py-2 px-2.5 text-right font-mono-seq font-bold text-[#EAE6DF]">
+                          {batchCalculation.totalMrnaMassMg} mg
                         </td>
-                        <td className="py-1.5 px-2 font-mono-seq tracking-wider">
-                          {guide.spacer.split('').map((char, charIdx) => (
-                            <span key={charIdx} className={getBaseColorClass(char)}>
-                              {char}
-                            </span>
-                          ))}
+                        <td className="py-2 px-2.5 text-right font-mono-seq text-[#98A1A6]">
+                          {batchMrnaConcMgMl.toFixed(2)} mg/mL
                         </td>
-                        <td className="py-1.5 px-2 font-mono-seq font-semibold text-[#cfa052]">
-                          {guide.pam}
+                        <td className="py-2 px-2.5 text-right text-[#98A1A6]">Therapeutic Payload</td>
+                      </tr>
+                      {batchCalculation.components.map((c, i) => (
+                        <tr
+                          key={i}
+                          className="border-b border-[#2E3338] text-[11px] hover:bg-[#2A2F34]"
+                        >
+                          <td className="py-2 px-2.5 text-[#EAE6DF] font-medium">{c.name}</td>
+                          <td className="py-2 px-2.5 text-right font-mono-seq text-[#98A1A6]">
+                            {c.molarPct.toFixed(1)}%
+                          </td>
+                          <td className="py-2 px-2.5 text-right font-mono-seq font-semibold text-[#EAE6DF]">
+                            {c.massMg} mg
+                          </td>
+                          <td className="py-2 px-2.5 text-right font-mono-seq text-[#98A1A6]">
+                            {c.molarConcMm} mM
+                          </td>
+                          <td className="py-2 px-2.5 text-right text-[#646D73] text-[10px]">
+                            {c.name.includes('Ionizable')
+                              ? 'Core Condensation'
+                              : c.name.includes('Helper')
+                              ? 'Bilayer Rigidity'
+                              : c.name.includes('Cholesterol')
+                              ? 'Membrane Fluidity'
+                              : 'Stealth Corona'}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="text-xs font-bold text-[#EAE6DF] bg-[#16181A]">
+                        <td className="py-2.5 px-2.5">Total Lipid Formulation</td>
+                        <td className="py-2.5 px-2.5 text-right font-mono-seq">100.0%</td>
+                        <td className="py-2.5 px-2.5 text-right font-mono-seq text-[#F5A623]">
+                          {batchCalculation.totalLipidMassMg} mg
                         </td>
-                        <td className="py-1.5 px-2 text-right font-mono-seq text-[#a69b8d]">
-                          {guide.gcContent.toFixed(1)}%
+                        <td className="py-2.5 px-2.5 text-right font-mono-seq text-[#98A1A6]">
+                          Total Vol: {batchVolumeMl.toFixed(1)} mL
                         </td>
-                        <td className="py-1.5 px-2 text-right font-mono-seq font-semibold text-[#e8dfd1]">
-                          {guide.CompositeScore}
-                        </td>
-                        <td className="py-1.5 px-2">
-                          {guide.bystanders.length === 0 ? (
-                            <span className="text-[#5e946c] text-[10px] font-medium">None</span>
-                          ) : (
-                            <span className="text-[#c98a3b] text-[10px] font-medium">
-                              {guide.bystanders.length} bystander{guide.bystanders.length > 1 ? 's' : ''}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-1.5 px-2">
-                          <span className="flex items-center gap-1.5">
-                            <span
-                              style={{ backgroundColor: verdictColor }}
-                              className="w-1.5 h-1.5 rounded-full shrink-0"
-                            />
-                            <span className="truncate max-w-[140px] text-[#e8dfd1]">
-                              {guide.verdict}
-                            </span>
-                          </span>
+                        <td className="py-2.5 px-2.5 text-right text-[#38D399] text-[11px]">
+                          N/P = {lnpForm.npRatio.toFixed(1)}
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Selected Guide Detail View & Cloning Oligos */}
-            {selectedGuide && cloningOligos && (
-              <div
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.borderMuted,
-                  borderRadius: tokens.radius,
-                }}
-                className="p-2.5 border flex flex-col gap-2 mt-1"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24201b] pb-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-xs text-[#e8dfd1]">
-                      {selectedGuide.id} Cloning Architecture
-                    </span>
-                    <span className="text-[10px] font-mono-seq px-1 py-0.2 rounded-[2px] bg-[#24201b] text-[#98c2cc]">
-                      Overhangs: {cloningOligos.overhangSystem}
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-[#a69b8d]">
-                    GC: {selectedGuide.gcContent.toFixed(1)}% • Score: {selectedGuide.CompositeScore}/100 • Target in window: {selectedGuide.targetInWindow ? 'Yes' : 'No'}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-[#a69b8d]">Forward Oligo (CACC overhang):</span>
-                      <button
-                        onClick={() => handleCopyOligo(cloningOligos.forwardOligo, 'fwd')}
-                        className="text-[10px] text-[#4d828f] hover:text-[#5e96a3] flex items-center gap-1 cursor-pointer"
-                      >
-                        {copiedOligo === 'fwd' ? (
-                          <Check className="w-2.5 h-2.5 text-[#5e946c]" />
-                        ) : (
-                          <Copy className="w-2.5 h-2.5" />
-                        )}
-                        <span>{copiedOligo === 'fwd' ? 'Copied' : 'Copy'}</span>
-                      </button>
-                    </div>
-                    <code className="p-1.5 rounded-[2px] bg-[#181613] border border-[#24201b] font-mono-seq text-[11px] text-[#e8dfd1] break-all select-all">
-                      {cloningOligos.forwardOligo}
-                    </code>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-[#a69b8d]">Reverse Oligo (AAAC overhang):</span>
-                      <button
-                        onClick={() => handleCopyOligo(cloningOligos.reverseOligo, 'rev')}
-                        className="text-[10px] text-[#4d828f] hover:text-[#5e96a3] flex items-center gap-1 cursor-pointer"
-                      >
-                        {copiedOligo === 'rev' ? (
-                          <Check className="w-2.5 h-2.5 text-[#5e946c]" />
-                        ) : (
-                          <Copy className="w-2.5 h-2.5" />
-                        )}
-                        <span>{copiedOligo === 'rev' ? 'Copied' : 'Copy'}</span>
-                      </button>
-                    </div>
-                    <code className="p-1.5 rounded-[2px] bg-[#181613] border border-[#24201b] font-mono-seq text-[11px] text-[#e8dfd1] break-all select-all">
-                      {cloningOligos.reverseOligo}
-                    </code>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
 
-          {/* Bystander Mutations Consequences Table */}
-          {selectedGuide && (() => {
-            const displayedBystanders =
-              annotatedBystanders.length === selectedGuide.bystanders.length
-                ? annotatedBystanders
-                : selectedGuide.bystanders;
+            {/* Ready-to-Order Commercial Oligo Synthesis Portal (IDT & GenScript CSVs) */}
+            <div className="instrument-panel">
+              <div className="instrument-header">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="instrument-status-dot dot-sequence" />
+                  <h2 className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+                    Commercial synthesis order sheets (BsmBI Golden Gate cloning oligos)
+                  </h2>
+                  <span className="status-badge-success text-[10px]">
+                    IUPAC &amp; U6 Validated
+                  </span>
+                </div>
+                <span className="text-[11px] text-[#646D73]">
+                  Pre-formatted bulk CSVs for direct commercial synthesis upload
+                </span>
+              </div>
 
-            return (
-              <div
-                style={{
-                  backgroundColor: tokens.colors.surface,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="border p-3 flex flex-col gap-2"
-              >
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                      Deaminase window (spacer pos {editorWindowLabel}) bystander consequences
-                    </h2>
-                    <span
-                      style={{
-                        borderColor: tokens.colors.border,
-                        backgroundColor: tokens.colors.surfaceRaised,
-                      }}
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-[#73a880] border"
+              <div className="p-3.5 bg-[#1E2124] grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* IDT Order Card */}
+                <div className="p-3.5 rounded-[2px] bg-[#16181A] border border-[#2E3338] flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-semibold text-xs text-[#EAE6DF]">Integrated DNA Technologies (IDT)</span>
+                      <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-[2px] bg-[#0284c7] text-white shadow-xs border border-white/10">
+                        4-Column CSV
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#98A1A6] leading-relaxed">
+                      Standard IDT bulk order format (<code className="text-[#38BDF8]">Name,Sequence,Scale,Purification</code>) with CACC/AAAC BsmBI overhangs and 5&apos;-G for human U6 promoter initiation.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 pt-2 border-t border-[#2E3338] flex-wrap">
+                    <button
+                      onClick={() => handleDownloadIdt(false)}
+                      className="tactile-btn text-xs"
+                      title="Download single CSV for selected candidate"
                     >
-                      <Sparkles className="w-3 h-3" />
-                      ClinVar &amp; Grantham Evaluated
-                    </span>
+                      <Download className="w-3.5 h-3.5 text-[#38BDF8]" />
+                      <span>Download Top Guide ({selectedGuide?.id ?? 'sgRNA-f1'}) CSV</span>
+                    </button>
+                    <button
+                      onClick={() => handleDownloadIdt(true)}
+                      className="tactile-btn text-xs text-[#98A1A6]"
+                      title="Download combined CSV for all discovered candidates"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>All {processedGuides.length} Candidates CSV</span>
+                    </button>
                   </div>
-                  <span className="text-[11px] text-[#70675c]">
-                    {displayedBystanders.length} potential edits in catalytic window
-                  </span>
                 </div>
 
-                {displayedBystanders.length === 0 ? (
-                  <p className="text-[11px] text-[#70675c] py-2 text-center">
-                    No editable bases found within the active deamination window ({editorWindowLabel}). Clean on-target window.
-                  </p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse text-left text-xs">
-                      <thead>
-                        <tr
-                          style={{ borderColor: tokens.colors.border }}
-                          className="border-b text-[#a69b8d] text-[11px]"
-                        >
-                          <th className="py-1 px-2 font-medium">Spacer pos</th>
-                          <th className="py-1 px-2 font-medium">Genomic bp</th>
-                          <th className="py-1 px-2 font-medium">Original codon</th>
-                          <th className="py-1 px-2 font-medium">Original residue</th>
-                          <th className="py-1 px-2 font-medium">Edited codon</th>
-                          <th className="py-1 px-2 font-medium">Edited residue</th>
-                          <th className="py-1 px-2 font-medium">Consequence classification</th>
-                          <th className="py-1 px-2 font-medium">ClinVar &amp; Grantham Impact</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {displayedBystanders.map((b, i) => {
-                          const isSafe =
-                            b.classification === 'Target Edit' ||
-                            b.classification === 'Silent (Synonymous)';
-                          const statusColor = isSafe
-                            ? tokens.colors.status.success
-                            : tokens.colors.status.danger;
-
-                          return (
-                            <tr
-                              key={i}
-                              style={{ borderColor: tokens.colors.borderMuted }}
-                              className="border-b text-[11px]"
-                            >
-                              <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">{b.guidePos}</td>
-                              <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">
-                                bp {b.genomicIndex + 1}
-                              </td>
-                              <td className="py-1 px-2 font-mono-seq tracking-wider">
-                                {b.originalCodon.split('').map((ch, cIdx) => (
-                                  <span key={cIdx} className={getBaseColorClass(ch)}>
-                                    {ch}
-                                  </span>
-                                ))}
-                              </td>
-                              <td className="py-1 px-2 font-mono-seq text-[#e8dfd1]">
-                                {b.originalAA}
-                              </td>
-                              <td className="py-1 px-2 font-mono-seq tracking-wider">
-                                {b.editedCodon.split('').map((ch, cIdx) => (
-                                  <span key={cIdx} className={getBaseColorClass(ch)}>
-                                    {ch}
-                                  </span>
-                                ))}
-                              </td>
-                              <td className="py-1 px-2 font-mono-seq text-[#e8dfd1]">{b.editedAA}</td>
-                              <td className="py-1 px-2">
-                                <span className="flex items-center gap-1.5">
-                                  <span
-                                    style={{ backgroundColor: statusColor }}
-                                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                                  />
-                                  <span className="text-[#e8dfd1]">{b.classification}</span>
-                                </span>
-                              </td>
-                              <td className="py-1 px-2">
-                                {b.clinvarTag ? (
-                                  <div className="flex flex-col gap-0.5">
-                                    <span
-                                      style={{
-                                        color: b.riskLevel?.includes('Pathogenic')
-                                          ? tokens.colors.status.danger
-                                          : b.riskLevel?.includes('Low') || b.riskLevel?.includes('Benign')
-                                          ? tokens.colors.status.success
-                                          : tokens.colors.accent,
-                                      }}
-                                      className="font-medium text-[10px]"
-                                    >
-                                      {b.clinvarTag}
-                                    </span>
-                                    {b.biochemicalImpact && (
-                                      <span className="text-[9.5px] text-[#70675c] leading-tight max-w-[240px] truncate block" title={b.biochemicalImpact}>
-                                        {b.biochemicalImpact}
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-[10px] text-[#70675c]">Evaluating...</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                {/* GenScript Order Card */}
+                <div className="p-3.5 rounded-[2px] bg-[#16181A] border border-[#2E3338] flex flex-col justify-between gap-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-semibold text-xs text-[#EAE6DF]">GenScript Molecular Portal</span>
+                      <span className="text-[10px] font-sans font-semibold px-2 py-0.5 rounded-[2px] bg-[#d97706] text-white shadow-xs border border-white/10">
+                        8-Column Batch CSV
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#98A1A6] leading-relaxed">
+                      Compliant with GenScript High-Throughput Oligo Synthesis: 50 nmol scale, standard desalt purification, and sequence checksum notation.
+                    </p>
                   </div>
-                )}
+                  <div className="flex items-center gap-2 pt-2 border-t border-[#2E3338] flex-wrap">
+                    <button
+                      onClick={() => handleDownloadGenScript(false)}
+                      className="tactile-btn text-xs"
+                      title="Download single CSV for selected candidate"
+                    >
+                      <Download className="w-3.5 h-3.5 text-[#38BDF8]" />
+                      <span>Download Top Guide ({selectedGuide?.id ?? 'sgRNA-f1'}) CSV</span>
+                    </button>
+                    <button
+                      onClick={() => handleDownloadGenScript(true)}
+                      className="tactile-btn text-xs text-[#98A1A6]"
+                      title="Download combined CSV for all discovered candidates"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>All {processedGuides.length} Candidates CSV</span>
+                    </button>
+                  </div>
+                </div>
               </div>
-            );
-          })()}
-            </>
-          )}
-
-          {/* ImmunoShield-DRA Cas9 Epitope Immunogenicity Section (Interactive South Asian Alleles) */}
-          {(activeTab === 'overview' || activeTab === 'immunology') && (
-            <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3 flex flex-col gap-2"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2.5">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  ImmunoShield-DRA: Cas9 surface epitope immunogenicity (South Asian HLA panel)
-                </h2>
-                <span
-                  style={{
-                    backgroundColor:
-                      residualHlaRisk === null
-                        ? tokens.colors.surfaceRaised
-                        : residualHlaRisk <= 20
-                        ? tokens.colors.status.successSubtle
-                        : residualHlaRisk <= 55
-                        ? tokens.colors.status.warningSubtle
-                        : tokens.colors.status.dangerSubtle,
-                    color:
-                      residualHlaRisk === null
-                        ? tokens.colors.textMuted
-                        : residualHlaRisk <= 20
-                        ? tokens.colors.status.success
-                        : residualHlaRisk <= 55
-                        ? tokens.colors.status.warning
-                        : tokens.colors.status.danger,
-                    borderRadius: tokens.radius,
-                  }}
-                  className="px-1.5 py-0.5 font-mono-seq text-[10px] font-semibold"
-                >
-                  CTL Risk: {residualHlaRisk === null ? 'Not assessed' : `${residualHlaRisk} / 100`}
-                </span>
-              </div>
-
-              <button
-                onClick={toggleAllStealth}
-                disabled={!hasPatientHlaSelection || patientRelevantEpitopes.length === 0}
-                style={{
-                  backgroundColor: tokens.colors.surfaceRaised,
-                  borderColor: tokens.colors.border,
-                  borderRadius: tokens.radius,
-                }}
-                className="px-2.5 py-0.5 text-xs font-medium border hover:bg-[#2a2621] disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer flex items-center gap-1.5"
-              >
-                <span
-                  style={{
-                    backgroundColor: allStealthEnabled
-                      ? tokens.colors.status.success
-                      : tokens.colors.status.warning,
-                  }}
-                  className="w-1.5 h-1.5 rounded-full"
-                />
-                <span className="text-[#e8dfd1]">
-                  {!hasPatientHlaSelection
-                    ? 'Select patient HLA alleles'
-                    : allStealthEnabled
-                    ? `All ${patientRelevantEpitopes.length} selected stealth mutations: Active`
-                    : 'Restore selected stealth mutations'}
-                </span>
-              </button>
             </div>
 
-            <fieldset
-              style={{
-                backgroundColor: tokens.colors.canvas,
-                borderColor: tokens.colors.borderMuted,
-                borderRadius: tokens.radius,
-              }}
-              className="border px-2.5 py-2"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                <legend className="text-[11px] font-medium text-[#e8dfd1]">
-                  Patient HLA haplotype / allele set
-                </legend>
-                <div className="flex items-center gap-2 text-[10px]">
+            {/* Pre-IND Regulatory Dossier Module 3 CMC Launch Desk */}
+            <div className="instrument-panel">
+              <div className="instrument-header">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="instrument-status-dot dot-immunology" />
+                  <h2 className="font-semibold text-xs tracking-wide text-[#EAE6DF] uppercase">
+                    Pre-IND Regulatory Technical Dossier (ICH M4Q / FDA eCTD Module 3 CMC)
+                  </h2>
+                  <span className="status-badge-success text-[10px]">
+                    9 Regulatory Modules Ready
+                  </span>
+                </div>
+                <span className="text-[11px] text-[#646D73]">
+                  Pre-IND submission package for CDER / CBER review
+                </span>
+              </div>
+
+              <div className="p-3.5 bg-[#1E2124] flex flex-col gap-3">
+                <p className="text-[11px] text-[#98A1A6] leading-relaxed">
+                  Review and print the complete technical dossier organized across <strong>3.2.S (Drug Substance: Engineered Cas9 RNP &amp; Modified sgRNA)</strong> and <strong>3.2.P (Drug Product: Encapsulated LNP Suspension)</strong>. Includes Sugimoto heteroduplex thermodynamics, Turner 2004 MFE partition, pan-allele South Asian HLA de-immunization audits, and microfluidic batch release criteria.
+                </p>
+
+                <div className="flex items-center gap-3 pt-1 flex-wrap">
                   <button
-                    type="button"
-                    onClick={() => setSelectedHlaAlleles([...SOUTH_ASIAN_HLA_ALLELES])}
-                    className="text-[#4d828f] hover:text-[#5e96a3] cursor-pointer"
+                    onClick={() => setIsDossierModalOpen(true)}
+                    className="tactile-btn text-xs bg-[#0f766e] hover:bg-[#115e59] text-white border-teal-600 font-semibold"
                   >
-                    Select panel
+                    <FileText className="w-4 h-4" />
+                    <span>Launch Pre-IND Dossier Modal (Interactive &amp; Print/PDF)</span>
                   </button>
                   <button
-                    type="button"
-                    onClick={() => setSelectedHlaAlleles([])}
-                    className="text-[#a69b8d] hover:text-[#e8dfd1] cursor-pointer"
+                    onClick={downloadDraDossier}
+                    className="tactile-btn text-xs"
                   >
-                    Clear
+                    <Download className="w-3.5 h-3.5 text-[#38BDF8]" />
+                    <span>Export Pre-IND Technical Dossier (.md)</span>
+                  </button>
+                  <button
+                    onClick={handleExportTopFasta}
+                    className="tactile-btn text-xs text-[#98A1A6]"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export Multi-Record FASTA (.fasta)</span>
                   </button>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-                {SOUTH_ASIAN_HLA_ALLELES.map((allele) => (
-                  <label
-                    key={allele}
-                    className="flex items-center gap-1 cursor-pointer text-[11px] text-[#a69b8d]"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedHlaAlleles.includes(allele)}
-                      onChange={() => togglePatientHlaAllele(allele)}
-                      className="accent-[#4d828f]"
-                    />
-                    {allele}
-                  </label>
-                ))}
-              </div>
-              <p className="mt-1.5 text-[10px] text-[#70675c]">
-                Only epitopes associated with a selected allele contribute to the illustrative residual-risk score.
-              </p>
-            </fieldset>
-
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr
-                    style={{ borderColor: tokens.colors.border }}
-                    className="border-b text-[#a69b8d] text-[11px]"
-                  >
-                    <th className="py-1 px-2 font-medium">Epitope peptide</th>
-                    <th className="py-1 px-2 font-medium">Residues</th>
-                    <th className="py-1 px-2 font-medium">Protein domain</th>
-                    <th className="py-1 px-2 font-medium">South Asian HLA allele</th>
-                    <th className="py-1 px-2 font-medium text-right font-mono-seq">Risk score</th>
-                    <th className="py-1 px-2 font-medium">De-immunization mutation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!hasPatientHlaSelection ? (
-                    <tr>
-                      <td colSpan={6} className="py-3 px-2 text-center text-[11px] text-[#70675c]">
-                        Select one or more patient HLA alleles to assess the curated epitope panel.
-                      </td>
-                    </tr>
-                  ) : patientRelevantEpitopes.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-3 px-2 text-center text-[11px] text-[#70675c]">
-                        No curated panel epitopes match the selected HLA alleles.
-                      </td>
-                    </tr>
-                  ) : (
-                    patientRelevantEpitopes.map((ep) => {
-                      const isShielded = activeStealthMutations[ep.peptide];
-                      return (
-                        <tr
-                          key={ep.peptide}
-                          style={{ borderColor: tokens.colors.borderMuted }}
-                          className="border-b text-[11px] hover:bg-[#2a2621] transition"
-                        >
-                          <td className="py-1 px-2 font-mono-seq font-semibold text-[#e8dfd1]">
-                            {ep.peptide}
-                          </td>
-                          <td className="py-1 px-2 font-mono-seq text-[#a69b8d]">
-                            {ep.residueRange}
-                          </td>
-                          <td className="py-1 px-2 text-[#a69b8d]">{ep.domain}</td>
-                          <td className="py-1 px-2 text-[#a69b8d]">{ep.hlaAllele}</td>
-                          <td className="py-1 px-2 text-right font-mono-seq">
-                            {isShielded ? (
-                              <span className="text-[#5e946c] font-medium">&lt;10</span>
-                            ) : (
-                              <span
-                                style={{ color: tokens.colors.status.danger }}
-                                className="font-semibold"
-                              >
-                                {ep.bindingScore} / 100
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-1 px-2">
-                            <label className="flex items-center gap-1.5 cursor-pointer text-[#e8dfd1]">
-                              <input
-                                type="checkbox"
-                                checked={isShielded}
-                                onChange={() => toggleSingleEpitope(ep.peptide)}
-                                className="accent-[#5e946c]"
-                                aria-label={`Enable ${ep.stealthMutation}`}
-                              />
-                              <span
-                                style={{
-                                  backgroundColor: isShielded
-                                    ? tokens.colors.status.success
-                                    : tokens.colors.status.danger,
-                                }}
-                                className="w-1.5 h-1.5 rounded-full shrink-0"
-                              />
-                              {isShielded ? ep.stealthMutation : 'Wild-type (unmodified anchor residue)'}
-                            </label>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
             </div>
           </div>
         )}
-      </section>
-    )}
-
-      {/* RIGHT WORKSTATION: LIPID NANOPARTICLE FORMULATION & BIOPHYSICS */}
-      {(activeTab === 'overview' || activeTab === 'lnp') && (
-        <section className={`${activeTab === 'overview' ? 'lg:col-span-5' : 'lg:col-span-12'} flex flex-col gap-3`}>
-          {/* Newcomer Dedicated Mode Guidance Callout */}
-          {workbenchMode === 'newcomer' && activeTab === 'lnp' && (
-            <NewcomerStageTip
-              stage="Stage 2: LNP Delivery"
-              title="Lipid Nanoparticle Biophysics & Endosomal Escape"
-              subtitle="Formulate 4-component LNPs (Ionizable Lipid, DSPC, Cholesterol, PEG-Lipid). Ionizable lipids remain near-neutral at physiological blood pH 7.4 to evade immune clearance, but undergo protonation in acidic endosomes (pH 5.5). This induces the Israelachvili Critical Packing Parameter (CPP ≥ 1.45) transition into the inverted hexagonal (HII) phase, fusing with endosomal membranes to release mRNA into the cytoplasm."
-              badgeText="Israelachvili CPP ≥ 1.45 Fusion"
-              bulletPoints={[
-                "Ionizable lipid pKa 6.0-6.5 balances blood circulation and endosomal escape",
-                "Israelachvili CPP >= 1.45 triggers non-bilayer hexagonal membrane disruption",
-                "ApoE-mediated receptor uptake drives targeted hepatic/endothelial biodistribution",
-              ]}
-            />
-          )}
-          {/* 3D nanoparticle cutaway: owns its title, toolbar, live readout and HUD */}
-          <NanoViewport3D formulation={activeFormulation} biophysics={biophysics} />
-
-          {/* Benchmarks, composition and assembly controls, ionization curve */}
-          <LnpFormulationPanel form={lnpForm} onChange={setLnpForm} biophysics={biophysics} />
-
-          {/* Wet-Lab Batch Preparation Mass Calculator (Collapsible / Toggleable in Overview) */}
-          {activeTab === 'overview' && showBatchCalc && (
-            <div
-              style={{
-                backgroundColor: tokens.colors.surface,
-                borderColor: tokens.colors.border,
-                borderRadius: tokens.radius,
-              }}
-              className="border p-3 flex flex-col gap-2.5"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Wet-lab batch preparation calculator
-                </h2>
-                <span className="text-[11px] text-[#70675c]">Microfluidic mixing protocol</span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <label className="text-[11px] text-[#a69b8d] block mb-0.5">
-                    Target batch volume (mL)
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={500}
-                    step={1}
-                    value={batchVolumeMl}
-                    onChange={(e) =>
-                      setBatchVolumeMl(Math.max(0.1, parseFloat(e.target.value) || 10))
-                    }
-                    style={{
-                      backgroundColor: tokens.colors.canvas,
-                      borderColor: tokens.colors.border,
-                      borderRadius: tokens.radius,
-                    }}
-                    className="w-full p-1 border font-mono-seq text-xs text-[#e8dfd1] outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] text-[#a69b8d] block mb-0.5">
-                    mRNA concentration (mg/mL)
-                  </label>
-                  <input
-                    type="number"
-                    min={0.1}
-                    max={10}
-                    step={0.1}
-                    value={batchMrnaConcMgMl}
-                    onChange={(e) =>
-                      setBatchMrnaConcMgMl(Math.max(0.05, parseFloat(e.target.value) || 1))
-                    }
-                    style={{
-                      backgroundColor: tokens.colors.canvas,
-                      borderColor: tokens.colors.border,
-                      borderRadius: tokens.radius,
-                    }}
-                    className="w-full p-1 border font-mono-seq text-xs text-[#e8dfd1] outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Mass Table */}
-              <div className="overflow-x-auto pt-1">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr
-                      style={{ borderColor: tokens.colors.border }}
-                      className="border-b text-[#a69b8d] text-[11px]"
-                    >
-                      <th className="py-1 px-1.5 font-medium">Component</th>
-                      <th className="py-1 px-1.5 font-medium text-right font-mono-seq">Molar %</th>
-                      <th className="py-1 px-1.5 font-medium text-right font-mono-seq">
-                        Mass to weigh
-                      </th>
-                      <th className="py-1 px-1.5 font-medium text-right font-mono-seq">
-                        Conc (mM)
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      style={{ borderColor: tokens.colors.borderMuted }}
-                      className="border-b text-[11px]"
-                    >
-                      <td className="py-1 px-1.5 font-semibold text-[#e8dfd1]">mRNA payload</td>
-                      <td className="py-1 px-1.5 text-right font-mono-seq text-[#a69b8d]">—</td>
-                      <td className="py-1 px-1.5 text-right font-mono-seq font-semibold text-[#e8dfd1]">
-                        {batchCalculation.totalMrnaMassMg} mg
-                      </td>
-                      <td className="py-1 px-1.5 text-right font-mono-seq text-[#a69b8d]">
-                        {batchMrnaConcMgMl.toFixed(2)} mg/mL
-                      </td>
-                    </tr>
-                    {batchCalculation.components.map((c, i) => (
-                      <tr
-                        key={i}
-                        style={{ borderColor: tokens.colors.borderMuted }}
-                        className="border-b text-[11px]"
-                      >
-                        <td className="py-1 px-1.5 text-[#e8dfd1]">{c.name}</td>
-                        <td className="py-1 px-1.5 text-right font-mono-seq text-[#a69b8d]">
-                          {c.molarPct.toFixed(1)}%
-                        </td>
-                        <td className="py-1 px-1.5 text-right font-mono-seq font-medium text-[#e8dfd1]">
-                          {c.massMg} mg
-                        </td>
-                        <td className="py-1 px-1.5 text-right font-mono-seq text-[#a69b8d]">
-                          {c.molarConcMm} mM
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="text-[11px] font-semibold text-[#e8dfd1]">
-                      <td className="py-1 px-1.5">Total Lipids</td>
-                      <td className="py-1 px-1.5 text-right font-mono-seq">100.0%</td>
-                      <td className="py-1 px-1.5 text-right font-mono-seq">
-                        {batchCalculation.totalLipidMassMg} mg
-                      </td>
-                      <td className="py-1 px-1.5 text-right font-mono-seq text-[#a69b8d]">
-                        Ratio:{' '}
-                        {(
-                          batchCalculation.totalLipidMassMg / batchCalculation.totalMrnaMassMg
-                        ).toFixed(1)}
-                        :1 w/w
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Calculated Biophysical Properties (Expanded 6-Card Grid) */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3 flex flex-col gap-2.5"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                Calculated biophysical properties
-              </h2>
-              <div className="flex items-center gap-1.5 text-[11px]">
-                <span
-                  style={{
-                    backgroundColor:
-                      biophysics.stabilityStatus === 'Optimal Clinical LNP'
-                        ? tokens.colors.status.success
-                        : tokens.colors.status.warning,
-                  }}
-                  className="w-1.5 h-1.5 rounded-full"
-                />
-                <span className="text-[#e8dfd1]">{biophysics.stabilityStatus}</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-              <div
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.borderMuted,
-                  borderRadius: tokens.radius,
-                }}
-                className="p-2 border"
-              >
-                <div className="text-[#70675c] text-[11px]">Hydrodynamic diameter</div>
-                <div className="font-mono-seq text-sm font-semibold text-[#e8dfd1]">
-                  {biophysics.diameterNm} nm
-                </div>
-                <div className="text-[10px] text-[#a69b8d] font-mono-seq">
-                  PDI: {biophysics.pdi.toFixed(2)}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.borderMuted,
-                  borderRadius: tokens.radius,
-                }}
-                className="p-2 border"
-              >
-                <div className="text-[#70675c] text-[11px]">Zeta potential (pH 7.4)</div>
-                <div className="font-mono-seq text-sm font-semibold text-[#e8dfd1]">
-                  {biophysics.zetaPotentialMv > 0
-                    ? `+${biophysics.zetaPotentialMv}`
-                    : biophysics.zetaPotentialMv}{' '}
-                  mV
-                </div>
-                <div className="text-[10px] text-[#a69b8d] font-mono-seq">
-                  Blood ionized: {biophysics.bloodProtonationPct}%
-                </div>
-              </div>
-
-              <div
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.borderMuted,
-                  borderRadius: tokens.radius,
-                }}
-                className="p-2 border"
-              >
-                <div className="text-[#70675c] text-[11px]">Endosomal ionization</div>
-                <div className="font-mono-seq text-sm font-semibold text-[#e8dfd1]">
-                  {biophysics.endosomalProtonationPct}%
-                </div>
-                <div className="text-[10px] text-[#a69b8d] font-mono-seq">
-                  At late endosome pH 5.5
-                </div>
-              </div>
-
-              <div
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.borderMuted,
-                  borderRadius: tokens.radius,
-                }}
-                className="p-2 border"
-              >
-                <div className="text-[#70675c] text-[11px]">ApoE uptake score</div>
-                <div className="font-mono-seq text-sm font-semibold text-[#e8dfd1]">
-                  {biophysics.cellularUptakeScore} / 100
-                </div>
-                <div className="text-[10px] text-[#a69b8d] font-mono-seq">
-                  Escape eff: {biophysics.endosomalEscapeEfficiency}%
-                </div>
-              </div>
-
-              <div
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.borderMuted,
-                  borderRadius: tokens.radius,
-                }}
-                className="p-2 border"
-              >
-                <div className="text-[#70675c] text-[11px]">De Gennes brush (RF/D)</div>
-                <div className="font-mono-seq text-sm font-semibold text-[#e8dfd1]">
-                  {biophysics.deGennesRfOverD?.toFixed(2) ?? '—'}
-                </div>
-                <div className="text-[10px] text-[#a69b8d] font-mono-seq">
-                  {(biophysics.deGennesRfOverD ?? 0) >= 1.0 ? 'Dense Brush' : 'Mushroom Regime'}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  backgroundColor: tokens.colors.canvas,
-                  borderColor: tokens.colors.borderMuted,
-                  borderRadius: tokens.radius,
-                }}
-                className="p-2 border"
-              >
-                <div className="text-[#70675c] text-[11px]">Packing param (CPP)</div>
-                <div className="font-mono-seq text-sm font-semibold text-[#e8dfd1]">
-                  {biophysics.criticalPackingParam?.toFixed(2) ?? '—'}
-                </div>
-                <div className="text-[10px] text-[#a69b8d] font-mono-seq">
-                  SAXS d: {biophysics.saxsBraggSpacingNm ?? 6.1} nm
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Predicted Biodistribution */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3 flex flex-col gap-2"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                Predicted organ biodistribution (SORT model)
-              </h2>
-              <span className="text-[11px] text-[#70675c]">Apparent charge partitioning</span>
-            </div>
-
-            <div className="flex flex-col gap-2 pt-1 text-xs">
-              <div>
-                <div className="flex justify-between mb-0.5 text-[11px]">
-                  <span className="text-[#a69b8d]">Liver (hepatocytes)</span>
-                  <span className="font-mono-seq text-[#e8dfd1]">
-                    {biophysics.organTropism.liver}%
-                  </span>
-                </div>
-                <div
-                  style={{
-                    backgroundColor: tokens.colors.canvas,
-                    borderRadius: '2px',
-                  }}
-                  className="w-full h-1.5 overflow-hidden"
-                >
-                  <div
-                    style={{
-                      width: `${biophysics.organTropism.liver}%`,
-                      backgroundColor: tokens.colors.accent,
-                    }}
-                    className="h-full transition-all"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between mb-0.5 text-[11px]">
-                  <span className="text-[#a69b8d]">Spleen (lymphoid / immune cells)</span>
-                  <span className="font-mono-seq text-[#e8dfd1]">
-                    {biophysics.organTropism.spleen}%
-                  </span>
-                </div>
-                <div
-                  style={{
-                    backgroundColor: tokens.colors.canvas,
-                    borderRadius: '2px',
-                  }}
-                  className="w-full h-1.5 overflow-hidden"
-                >
-                  <div
-                    style={{
-                      width: `${biophysics.organTropism.spleen}%`,
-                      backgroundColor: tokens.colors.pigments.ochre,
-                    }}
-                    className="h-full transition-all"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between mb-0.5 text-[11px]">
-                  <span className="text-[#a69b8d]">Lungs (endothelial beds)</span>
-                  <span className="font-mono-seq text-[#e8dfd1]">
-                    {biophysics.organTropism.lungs}%
-                  </span>
-                </div>
-                <div
-                  style={{
-                    backgroundColor: tokens.colors.canvas,
-                    borderRadius: '2px',
-                  }}
-                  className="w-full h-1.5 overflow-hidden"
-                >
-                  <div
-                    style={{
-                      width: `${biophysics.organTropism.lungs}%`,
-                      backgroundColor: tokens.colors.pigments.verdigris,
-                    }}
-                    className="h-full transition-all"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* DEDICATED STAGE 4 WORKSTATION: WET-LAB BATCH PREPARATION & CMC REGULATORY DOSSIER */}
-      {activeTab === 'batch' && (
-        <section className="lg:col-span-12 flex flex-col gap-3">
-          {/* Newcomer Dedicated Mode Guidance Callout */}
-          {workbenchMode === 'newcomer' && (
-            <NewcomerStageTip
-              stage="Stage 4: Wet-Lab Batch & CMC Dossier"
-              title="Microfluidic Mass Scaling, Commercial Oligo Ordering & Regulatory Technical Dossier"
-              subtitle="Translate cellular-scale dosages into physical milligram quantities of lipid and mRNA for microfluidic synthesis. Download commercial synthesis sheets formatted for IDT and GenScript, and launch the Pre-IND Regulatory Technical Dossier adhering to ICH M4Q / FDA eCTD Module 3 (CMC) standards."
-              badgeText="Microfluidic Dosing & FDA eCTD Module 3 CMC"
-              bulletPoints={[
-                "Calculate exact masses of mRNA and all 4 lipids for microfluidic mixing",
-                "Export 1-click IDT and GenScript CSV bulk synthesis order sheets",
-                "Review formal ICH M4Q / FDA eCTD Module 3 Pre-IND Dossier with release criteria",
-              ]}
-            />
-          )}
-
-          {/* Target Locus Metadata Bar */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24201b] pb-2 mb-2">
-              <div>
-                <span className="font-semibold text-sm text-[#e8dfd1] mr-2">
-                  {activePreset.symbol}
-                </span>
-                <span className="text-[#a69b8d] text-xs">{activePreset.name}</span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2.5 text-xs text-[#a69b8d]">
-                <span>
-                  Indication: <strong className="text-[#e8dfd1] font-medium">{activePreset.disease}</strong>
-                </span>
-                <span>•</span>
-                <span>
-                  Target tissue: <strong className="text-[#e8dfd1] font-medium">{activePreset.targetOrgan}</strong>
-                </span>
-                <span>•</span>
-                <span>
-                  Lead guide: <strong className="text-[#e8dfd1] font-mono-seq">{selectedGuide?.id ?? 'sgRNA-f1'}</strong>
-                </span>
-              </div>
-            </div>
-            <p className="text-[#70675c] text-[11px] leading-relaxed">
-              Batch mass scaling and regulatory specifications for clinical investigational drug product formulation.
-            </p>
-          </div>
-
-          {/* Wet-Lab Batch Preparation Mass Calculator (Full Width) */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3.5 flex flex-col gap-3"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Wet-lab microfluidic batch preparation calculator
-                </h2>
-                <span className="text-[10px] font-mono-seq px-1.5 py-0.5 rounded bg-[#211e1a] text-[#d4a359] border border-[#332e27]">
-                  Flow Ratio 3:1 (Aqueous:Ethanol)
-                </span>
-              </div>
-              <span className="text-[11px] text-[#70675c]">
-                Physical component mass requirements for NanoAssemblr / microfluidic mixer
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-              <div>
-                <label className="text-[11px] text-[#a69b8d] block mb-1">
-                  Target batch volume (mL)
-                </label>
-                <input
-                  type="number"
-                  min={0.5}
-                  max={1000}
-                  step={1}
-                  value={batchVolumeMl}
-                  onChange={(e) =>
-                    setBatchVolumeMl(Math.max(0.1, parseFloat(e.target.value) || 10))
-                  }
-                  style={{
-                    backgroundColor: tokens.colors.canvas,
-                    borderColor: tokens.colors.border,
-                    borderRadius: tokens.radius,
-                  }}
-                  className="w-full p-2 border font-mono-seq text-xs text-[#e8dfd1] outline-none focus:border-[#4d828f]"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] text-[#a69b8d] block mb-1">
-                  mRNA concentration (mg/mL)
-                </label>
-                <input
-                  type="number"
-                  min={0.05}
-                  max={20}
-                  step={0.1}
-                  value={batchMrnaConcMgMl}
-                  onChange={(e) =>
-                    setBatchMrnaConcMgMl(Math.max(0.05, parseFloat(e.target.value) || 1))
-                  }
-                  style={{
-                    backgroundColor: tokens.colors.canvas,
-                    borderColor: tokens.colors.border,
-                    borderRadius: tokens.radius,
-                  }}
-                  className="w-full p-2 border font-mono-seq text-xs text-[#e8dfd1] outline-none focus:border-[#4d828f]"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] text-[#a69b8d] block mb-1">
-                  N/P Charge Ratio
-                </label>
-                <div className="p-2 border border-[#2e2923] rounded bg-[#181613] font-mono-seq text-xs text-[#e8dfd1] flex items-center justify-between">
-                  <span>{lnpForm.npRatio.toFixed(1)}:1</span>
-                  <span className="text-[10px] text-[#70675c]">Amine : Phosphate</span>
-                </div>
-              </div>
-              <div>
-                <label className="text-[11px] text-[#a69b8d] block mb-1">
-                  Total Lipid:mRNA Ratio
-                </label>
-                <div className="p-2 border border-[#2e2923] rounded bg-[#181613] font-mono-seq text-xs text-[#e8dfd1] flex items-center justify-between">
-                  <span>{(batchCalculation.totalLipidMassMg / batchCalculation.totalMrnaMassMg).toFixed(1)}:1 w/w</span>
-                  <span className="text-[10px] text-[#73a880]">Clinical Standard</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Mass & Concentration Breakdown Table */}
-            <div className="overflow-x-auto pt-1">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr
-                    style={{ borderColor: tokens.colors.border }}
-                    className="border-b text-[#a69b8d] text-[11px]"
-                  >
-                    <th className="py-2 px-2.5 font-medium">Component</th>
-                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Molar %</th>
-                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Mass to Weigh (mg)</th>
-                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Concentration (mM)</th>
-                    <th className="py-2 px-2.5 font-medium text-right font-mono-seq">Phase / Role</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    style={{ borderColor: tokens.colors.borderMuted }}
-                    className="border-b text-[11px]"
-                  >
-                    <td className="py-2 px-2.5 font-semibold text-[#e8dfd1]">
-                      mRNA Payload (Base Editor &amp; sgRNA)
-                    </td>
-                    <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">—</td>
-                    <td className="py-2 px-2.5 text-right font-mono-seq font-bold text-[#e8dfd1]">
-                      {batchCalculation.totalMrnaMassMg} mg
-                    </td>
-                    <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">
-                      {batchMrnaConcMgMl.toFixed(2)} mg/mL
-                    </td>
-                    <td className="py-2 px-2.5 text-right text-[#a69b8d]">Therapeutic Payload</td>
-                  </tr>
-                  {batchCalculation.components.map((c, i) => (
-                    <tr
-                      key={i}
-                      style={{ borderColor: tokens.colors.borderMuted }}
-                      className="border-b text-[11px] hover:bg-[#1a1714]"
-                    >
-                      <td className="py-2 px-2.5 text-[#e8dfd1] font-medium">{c.name}</td>
-                      <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">
-                        {c.molarPct.toFixed(1)}%
-                      </td>
-                      <td className="py-2 px-2.5 text-right font-mono-seq font-semibold text-[#e8dfd1]">
-                        {c.massMg} mg
-                      </td>
-                      <td className="py-2 px-2.5 text-right font-mono-seq text-[#a69b8d]">
-                        {c.molarConcMm} mM
-                      </td>
-                      <td className="py-2 px-2.5 text-right text-[#70675c] text-[10px]">
-                        {c.name.includes('Ionizable')
-                          ? 'Core Condensation'
-                          : c.name.includes('Helper')
-                          ? 'Bilayer Rigidity'
-                          : c.name.includes('Cholesterol')
-                          ? 'Membrane Fluidity'
-                          : 'Stealth Corona'}
-                      </td>
-                    </tr>
-                  ))}
-                  <tr className="text-xs font-bold text-[#e8dfd1] bg-[#181613]">
-                    <td className="py-2.5 px-2.5">Total Lipid Formulation</td>
-                    <td className="py-2.5 px-2.5 text-right font-mono-seq">100.0%</td>
-                    <td className="py-2.5 px-2.5 text-right font-mono-seq text-[#d4a359]">
-                      {batchCalculation.totalLipidMassMg} mg
-                    </td>
-                    <td className="py-2.5 px-2.5 text-right font-mono-seq text-[#a69b8d]">
-                      Total Vol: {batchVolumeMl.toFixed(1)} mL
-                    </td>
-                    <td className="py-2.5 px-2.5 text-right text-[#5e946c] text-[11px]">
-                      N/P = {lnpForm.npRatio.toFixed(1)}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Ready-to-Order Commercial Oligo Synthesis Portal (IDT & GenScript CSVs) */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3.5 flex flex-col gap-3"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Commercial synthesis order sheets (BsmBI Golden Gate cloning oligos)
-                </h2>
-                <span className="text-[10px] font-mono-seq px-1.5 py-0.5 rounded bg-[#211e1a] text-[#73a880] border border-[#332e27]">
-                  IUPAC &amp; U6 Transcription Validated
-                </span>
-              </div>
-              <span className="text-[11px] text-[#70675c]">
-                Pre-formatted bulk CSVs for direct commercial synthesis upload
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-              {/* IDT Order Card */}
-              <div className="p-3.5 rounded-[3px] bg-[#161411] border border-[#2e2923] flex flex-col justify-between gap-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-semibold text-xs text-[#e8dfd1]">Integrated DNA Technologies (IDT)</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#24201b] text-[#4d828f] border border-[#332e27]">
-                      4-Column CSV
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#a69b8d] leading-relaxed">
-                    Standard IDT bulk order format (<code className="text-[#98c2cc]">Name,Sequence,Scale,Purification</code>) with CACC/AAAC BsmBI overhangs and 5&apos;-G for human U6 promoter initiation.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 pt-2 border-t border-[#24201b] flex-wrap">
-                  <button
-                    onClick={() => handleDownloadIdt(false)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
-                    title="Download single CSV for selected candidate"
-                  >
-                    <Download className="w-3.5 h-3.5 text-[#4d828f]" />
-                    <span>Download Top Guide ({selectedGuide?.id ?? 'sgRNA-f1'}) CSV</span>
-                  </button>
-                  <button
-                    onClick={() => handleDownloadIdt(true)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
-                    title="Download combined CSV for all discovered candidates"
-                  >
-                    <Download className="w-3.5 h-3.5 text-[#a69b8d]" />
-                    <span>All {processedGuides.length} Candidates CSV</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* GenScript Order Card */}
-              <div className="p-3.5 rounded-[3px] bg-[#161411] border border-[#2e2923] flex flex-col justify-between gap-3">
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-semibold text-xs text-[#e8dfd1]">GenScript Molecular Portal</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#24201b] text-[#d4a359] border border-[#332e27]">
-                      8-Column Batch CSV
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#a69b8d] leading-relaxed">
-                    Compliant with GenScript High-Throughput Oligo Synthesis: 50 nmol scale, standard desalt purification, and sequence checksum notation.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 pt-2 border-t border-[#24201b] flex-wrap">
-                  <button
-                    onClick={() => handleDownloadGenScript(false)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
-                    title="Download single CSV for selected candidate"
-                  >
-                    <Download className="w-3.5 h-3.5 text-[#4d828f]" />
-                    <span>Download Top Guide ({selectedGuide?.id ?? 'sgRNA-f1'}) CSV</span>
-                  </button>
-                  <button
-                    onClick={() => handleDownloadGenScript(true)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-[2px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center gap-1.5 transition cursor-pointer"
-                    title="Download combined CSV for all discovered candidates"
-                  >
-                    <Download className="w-3.5 h-3.5 text-[#a69b8d]" />
-                    <span>All {processedGuides.length} Candidates CSV</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Pre-IND Regulatory Dossier Module 3 CMC Launch Desk */}
-          <div
-            style={{
-              backgroundColor: tokens.colors.surface,
-              borderColor: tokens.colors.border,
-              borderRadius: tokens.radius,
-            }}
-            className="border p-3.5 flex flex-col gap-3"
-          >
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]">
-                  Pre-IND Regulatory Technical Dossier (ICH M4Q / FDA eCTD Module 3 CMC)
-                </h2>
-                <span className="text-[10px] font-mono-seq px-1.5 py-0.5 rounded bg-[#0f766e]/20 text-[#2dd4bf] border border-[#0f766e]/40">
-                  9 Regulatory Modules Ready
-                </span>
-              </div>
-              <span className="text-[11px] text-[#70675c]">
-                Pre-IND submission package for CDER / CBER review
-              </span>
-            </div>
-
-            <p className="text-[11px] text-[#a69b8d] leading-relaxed">
-              Review and print the complete technical dossier organized across <strong>3.2.S (Drug Substance: Engineered Cas9 RNP &amp; Modified sgRNA)</strong> and <strong>3.2.P (Drug Product: Encapsulated LNP Suspension)</strong>. Includes Sugimoto heteroduplex thermodynamics, Turner 2004 MFE partition, pan-allele South Asian HLA de-immunization audits, and microfluidic batch release criteria.
-            </p>
-
-            <div className="flex items-center gap-3 pt-1 flex-wrap">
-              <button
-                onClick={() => setIsDossierModalOpen(true)}
-                className="px-4 py-2 text-xs font-semibold rounded-[3px] bg-[#0f766e] hover:bg-[#115e59] text-white flex items-center gap-2 transition cursor-pointer shadow-sm"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Launch Pre-IND Dossier Modal (Interactive &amp; Print/PDF)</span>
-              </button>
-              <button
-                onClick={downloadDraDossier}
-                className="px-3.5 py-2 text-xs font-medium rounded-[3px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#e8dfd1] flex items-center gap-2 transition cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5 text-[#4d828f]" />
-                <span>Export Pre-IND Technical Dossier (.md)</span>
-              </button>
-              <button
-                onClick={handleExportTopFasta}
-                className="px-3.5 py-2 text-xs font-medium rounded-[3px] bg-[#211e1a] hover:bg-[#2a2621] border border-[#332e27] hover:border-[#4d828f] text-[#a69b8d] hover:text-[#e8dfd1] flex items-center gap-2 transition cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5 text-[#a69b8d]" />
-                <span>Export Multi-Record FASTA (.fasta)</span>
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
       </main>
 
       {/* Pre-IND Regulatory Technical Dossier Modal */}

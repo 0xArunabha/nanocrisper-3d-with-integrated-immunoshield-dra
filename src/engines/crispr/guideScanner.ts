@@ -31,6 +31,23 @@ export function estimateLocalThermodynamics(spacer: string): ThermodynamicProfil
   const dnaDg = dg37 * 0.78;
   const rLoopNet = dg37 - dnaDg;
 
+  // Harmonized thermodynamic efficiency bonus matching Python backend
+  let bonus = 0.0;
+  if (dg37 >= -34.5 && dg37 <= -24.0) {
+    bonus += 5.0;
+  } else if (dg37 < -38.0 || dg37 > -18.0) {
+    bonus -= 6.0;
+  }
+  const seedDg = Math.round((dg37 * 0.52) * 100) / 100;
+  const distalDg = Math.round((dg37 * 0.48) * 100) / 100;
+  if (seedDg >= -16.0 && seedDg <= -11.0) {
+    bonus += 3.0;
+  } else if (seedDg < -17.5) {
+    bonus -= 4.0;
+  }
+  const hasGcClamp = clean.length >= 20 && /[GC]/.test(clean[18]) && /[GC]/.test(clean[19]);
+  if (hasGcClamp) bonus += 2.0;
+
   return {
     spacer: clean,
     rnaDnaDg37: Math.round(dg37 * 100) / 100,
@@ -45,14 +62,14 @@ export function estimateLocalThermodynamics(spacer: string): ThermodynamicProfil
     hairpinStemLength: 0,
     hairpinLoopSize: 0,
     hairpinRisk: 'Low / Unstructured',
-    seedDg: Math.round((dg37 * 0.52) * 100) / 100,
-    distalDg: Math.round((dg37 * 0.48) * 100) / 100,
+    seedDg,
+    distalDg,
     seedAsymmetryDdg: 0.0,
-    hasGcClamp: clean.length >= 20 && /[GC]/.test(clean[18]) && /[GC]/.test(clean[19]),
+    hasGcClamp,
     selfDimerDg: -1.5,
     selfDimerRisk: 'Negligible',
     thermodynamicVerdict: 'Optimal Thermodynamic Profile',
-    thermodynamicEfficiencyBonus: 0.0,
+    thermodynamicEfficiencyBonus: Math.round(bonus * 10) / 10,
   };
 }
 
@@ -122,52 +139,74 @@ export function isPreferredPam(pam: string, pamVariant: PamVariant = 'SpCas9'): 
   return classifyPam(pam, pamVariant) === 'preferred';
 }
 
+const BASE_EDITOR_POS_WEIGHTS: Record<string, Record<number, number>> = {
+  'ABE8e (A→G)': { 4: 0.78, 5: 1.00, 6: 1.00, 7: 0.92, 8: 0.68 },
+  'ABE9 (A→G; window 5–6)': { 5: 1.00, 6: 1.00 },
+  'BE4max (C→T)': { 4: 0.88, 5: 0.98, 6: 1.00, 7: 0.86, 8: 0.62 },
+};
+
 function scoreGuideCandidate(
+  spacer: string,
   hasPreferredPam: boolean,
   gcContent: number,
   targetInWindow: boolean,
-  targetAtPeakCenter: boolean,
+  targetPosWeight: number,
   hasPolIIITerminator: boolean,
   edits: BystanderEdit[],
-  hasSasSnpCollision: boolean
+  hasSasSnpCollision: boolean,
+  thermo?: ThermodynamicProfile
 ): { score: number; verdict: GuideCandidate['verdict'] } {
   let score = hasPreferredPam ? 65 : 48;
 
-  if (gcContent >= 40 && gcContent <= 60) {
-    score += 15;
-  } else if (gcContent < 30 || gcContent > 75) {
-    score -= 10;
-  }
-
-  if (targetInWindow) {
-    score += 35;
-    if (targetAtPeakCenter) score += 4;
+  if (thermo) {
+    score += thermo.thermodynamicEfficiencyBonus;
   } else {
-    score -= 25;
+    if (gcContent >= 40 && gcContent <= 60) {
+      score += 16;
+    } else if (gcContent >= 35 && gcContent <= 65) {
+      score += 9;
+    } else {
+      score -= 10;
+    }
   }
 
+  // 2. Seed Region (positions 13-20 proximal to PAM) G/C nucleation stability
+  const seedGc = (spacer.slice(12, 20).match(/[GC]/g) || []).length;
+  if (seedGc >= 3 && seedGc <= 6) {
+    score += 4;
+  }
+
+  // 3. Empirical Deaminase Positional Efficiency
+  if (targetInWindow) {
+    score += 32.0 + (targetPosWeight * 8.0);
+  } else {
+    score -= 25.0;
+  }
+
+  // 4. U6 Pol III termination check (TTTT)
   if (hasPolIIITerminator) {
-    score -= 30;
+    score -= 30.0;
   }
 
+  // 5. Bystander Codon Consequence Penalties
   let hasHarmfulBystander = false;
   let hasSilentBystander = false;
 
   for (const e of edits) {
     if (e.classification === 'Nonsense (Premature Stop)') {
-      score -= 45;
+      score -= 45.0;
       hasHarmfulBystander = true;
     } else if (e.classification === 'Missense (Pathogenic Risk)') {
-      score -= 25;
+      score -= 25.0;
       hasHarmfulBystander = true;
     } else if (e.classification === 'Silent (Synonymous)') {
-      score += 4;
+      score += 4.0;
       hasSilentBystander = true;
     }
   }
 
-  if (hasSasSnpCollision) score -= 20;
-  score = Math.max(5, Math.min(99, score));
+  if (hasSasSnpCollision) score -= 20.0;
+  const finalScore = Math.max(5, Math.min(99, Math.round(score)));
 
   let verdict: GuideCandidate['verdict'] = 'Low Efficiency';
   if (targetInWindow && !hasHarmfulBystander && !hasSasSnpCollision && !hasPolIIITerminator) {
@@ -176,7 +215,7 @@ function scoreGuideCandidate(
     verdict = 'High Risk (Bystander/SNP)';
   }
 
-  return { score, verdict };
+  return { score: finalScore, verdict };
 }
 
 /**
@@ -219,7 +258,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
 
     const edits: BystanderEdit[] = [];
     let targetInWindow = false;
-    let targetAtPeakCenter = false;
+    let targetPosWeight = 0.8;
 
     for (let pos = windowStart; pos <= windowEnd; pos++) {
       const genomicIdx = i + (pos - 1);
@@ -237,7 +276,9 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
         const isTarget = genomicIdx === preset.mutationIndex;
         if (isTarget) {
           targetInWindow = true;
-          if (editor.peakPositions.includes(pos)) targetAtPeakCenter = true;
+          targetPosWeight =
+            BASE_EDITOR_POS_WEIGHTS[preset.editorType]?.[pos] ??
+            (editor.peakPositions.includes(pos) ? 1.0 : 0.8);
         }
 
         let classification: BystanderEdit['classification'] = 'Missense (Pathogenic Risk)';
@@ -261,15 +302,18 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
       }
     }
 
+    const thermo = estimateLocalThermodynamics(spacer);
     const hasSasSnpCollision = preset.sasSnpIndex >= i && preset.sasSnpIndex <= i + 22;
     const { score, verdict } = scoreGuideCandidate(
+      spacer,
       hasPreferredPam,
       gcContent,
       targetInWindow,
-      targetAtPeakCenter,
+      targetPosWeight,
       hasPolIIITerminator,
       edits,
-      hasSasSnpCollision
+      hasSasSnpCollision,
+      thermo
     );
 
     candidates.push({
@@ -284,7 +328,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
       hasSasSnpCollision,
       CompositeScore: score,
       verdict,
-      thermoProfile: estimateLocalThermodynamics(spacer),
+      thermoProfile: thermo,
     });
   }
 
@@ -316,7 +360,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
 
     const edits: BystanderEdit[] = [];
     let targetInWindow = false;
-    let targetAtPeakCenter = false;
+    let targetPosWeight = 0.8;
 
     for (let pos = windowStart; pos <= windowEnd; pos++) {
       const genomicIdx = (i + 19) - (pos - 1);
@@ -335,7 +379,9 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
         const isTarget = genomicIdx === preset.mutationIndex;
         if (isTarget) {
           targetInWindow = true;
-          if (editor.peakPositions.includes(pos)) targetAtPeakCenter = true;
+          targetPosWeight =
+            BASE_EDITOR_POS_WEIGHTS[preset.editorType]?.[pos] ??
+            (editor.peakPositions.includes(pos) ? 1.0 : 0.8);
         }
 
         let classification: BystanderEdit['classification'] = 'Missense (Pathogenic Risk)';
@@ -359,16 +405,19 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
       }
     }
 
+    const thermo = estimateLocalThermodynamics(spacer);
     // Full 23-nt antisense footprint spans PAM (i-3 .. i-1) + spacer (i .. i+19)
     const hasSasSnpCollision = preset.sasSnpIndex >= i - 3 && preset.sasSnpIndex <= i + 19;
     const { score, verdict } = scoreGuideCandidate(
+      spacer,
       hasPreferredPam,
       gcContent,
       targetInWindow,
-      targetAtPeakCenter,
+      targetPosWeight,
       hasPolIIITerminator,
       edits,
-      hasSasSnpCollision
+      hasSasSnpCollision,
+      thermo
     );
 
     candidates.push({
@@ -383,7 +432,7 @@ export function scanForGuides(preset: GenePreset): GuideCandidate[] {
       hasSasSnpCollision,
       CompositeScore: score,
       verdict,
-      thermoProfile: estimateLocalThermodynamics(spacer),
+      thermoProfile: thermo,
     });
   }
 

@@ -313,7 +313,14 @@ export function SequenceWorkbench({
   for (let i = lo; i < hi; i++) {
     const b = seq.charAt(i);
     const edit = editAt.get(i);
-    const cls = ['sw-nt', `sw-nt--${b}`, edit ? 'is-edit' : '', i === targetPos ? 'is-target' : '']
+    const inWindow = analysis ? i >= analysis.windowFrom && i <= analysis.windowTo : false;
+    const cls = [
+      'sw-nt',
+      `sw-nt--${b}`,
+      inWindow ? 'in-window' : '',
+      edit ? 'is-edit' : '',
+      i === targetPos ? 'is-target' : '',
+    ]
       .filter(Boolean)
       .join(' ');
     bases.push(
@@ -406,16 +413,22 @@ export function SequenceWorkbench({
     const hit = analysis?.snpHits.some((h) => h.id === s.id && h.pos === s.pos) ?? false;
     const change = s.ref && s.alt ? ` · ${s.ref}>${s.alt}` : '';
     return (
-      <div
-        key={key}
-        className={`sw-snp${hit ? ' is-hit' : ''}`}
-        style={{ left: s.pos * ntW, top: 4 + lane * ROW.snpLane }}
-        title={`${s.id}${change} · position ${s.pos + 1} · ${snpFreq(s)}`}
-      >
-        <span className="sw-snp__mark" style={{ width: ntW }}>
-          <i />
-        </span>
-        <span className="sw-snp__label">{snpLabel(s)}</span>
+      <div key={key}>
+        <div
+          className="sw-snp-collision-line"
+          style={{ left: s.pos * ntW + ntW / 2 }}
+          title={`Collision warning axis for ${s.id}`}
+        />
+        <div
+          className={`sw-snp${hit ? ' is-hit' : ''}`}
+          style={{ left: s.pos * ntW, top: 4 + lane * ROW.snpLane }}
+          title={`${s.id}${change} · position ${s.pos + 1} · ${snpFreq(s)}`}
+        >
+          <span className="sw-snp__mark" style={{ width: ntW }}>
+            <i />
+          </span>
+          <span className="sw-snp__label">{snpLabel(s)}</span>
+        </div>
       </div>
     );
   });
@@ -470,9 +483,12 @@ export function SequenceWorkbench({
   const [w0, w1] = editor.window;
 
   return (
-    <section className="sw" aria-label={`Sequence workbench, ${title ?? 'sequence'}`}>
-      <header className="sw-head">
-        <h2 className="sw-title">{title ?? 'Sequence'}</h2>
+    <section className="sw instrument-panel" aria-label={`Sequence workbench, ${title ?? 'sequence'}`}>
+      <header className="sw-head instrument-header">
+        <div className="instrument-header-title">
+          <span className="instrument-status-dot dot-sequence" />
+          <h2 className="sw-title">{title ?? 'Sequence'}</h2>
+        </div>
         <span className="sw-meta">
           {seq.length} nt · {codons.length} codons · {editor.name} ({editor.from}→{editor.to}), window {w0}–{w1}
         </span>

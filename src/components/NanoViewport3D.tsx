@@ -119,9 +119,9 @@ function createElectronDensityTexture(
           gVal = Math.round(195 * (0.6 + protonationFraction * 0.4));
           bVal = Math.round(140 + protonationFraction * 80);
         } else {
-          rVal = Math.round(215 * rimIntensity);
-          gVal = Math.round(175 * rimIntensity);
-          bVal = Math.round(105 * rimIntensity);
+          rVal = Math.round(217 * rimIntensity);
+          gVal = Math.round(119 * rimIntensity);
+          bVal = Math.round(54 * rimIntensity);
         }
         aVal = Math.round(250 * Math.min(1.0, (1.0 - r) * 25));
       }
@@ -381,7 +381,7 @@ function InstancedNanoparticleScene({
           col.set('#b0a79a');
         } else {
           col.lerpColors(
-            new THREE.Color('#cfa052'),
+            new THREE.Color('#D97736'),
             new THREE.Color(tokens.colors.status.success),
             liveProtonation * 0.65
           );
@@ -756,13 +756,6 @@ function InstancedNanoparticleScene({
     };
   }, [electronDensityTex]);
 
-  const coreStatusColor =
-    biophysics.endosomalEscapeEfficiency >= 75
-      ? tokens.colors.status.success
-      : biophysics.endosomalEscapeEfficiency >= 55
-      ? tokens.colors.status.warning
-      : tokens.colors.status.danger;
-
   const getLayerOpacity = (layer: InspectedLayer) => {
     if (inspectedLayer === 'all' || inspectedLayer === layer) return 1.0;
     return 0.18;
@@ -814,12 +807,12 @@ function InstancedNanoparticleScene({
           <mesh position={[0.06 * coreRadius, 0.12 * coreRadius, 0.08 * coreRadius]} rotation={[0.3, 0.4, 0.2]}>
             <capsuleGeometry args={[coreRadius * 0.13, coreRadius * 0.20, 12, 16]} />
             <meshPhysicalMaterial
-              color={tokens.colors.pigments.mauve}
+              color="#F43F5E"
               roughness={0.32}
               clearcoat={0.45}
               transparent
               opacity={0.88 * getLayerOpacity('mrna')}
-              emissive={new THREE.Color(tokens.colors.pigments.mauve)}
+              emissive={new THREE.Color('#F43F5E')}
               emissiveIntensity={inspectedLayer === 'mrna' ? 0.35 : 0.05}
             />
           </mesh>
@@ -828,12 +821,12 @@ function InstancedNanoparticleScene({
           <mesh position={[-0.10 * coreRadius, -0.07 * coreRadius, 0.10 * coreRadius]} rotation={[-0.2, -0.3, 0.4]}>
             <capsuleGeometry args={[coreRadius * 0.12, coreRadius * 0.18, 12, 16]} />
             <meshPhysicalMaterial
-              color={coreStatusColor}
+              color="#38D399"
               roughness={0.30}
               clearcoat={0.50}
               transparent
               opacity={0.90 * getLayerOpacity('mrna')}
-              emissive={new THREE.Color(coreStatusColor)}
+              emissive={new THREE.Color('#38D399')}
               emissiveIntensity={inspectedLayer === 'mrna' ? 0.40 : 0.08}
             />
           </mesh>
@@ -842,12 +835,12 @@ function InstancedNanoparticleScene({
           <mesh position={[0.22 * coreRadius, -0.02 * coreRadius, 0.14 * coreRadius]}>
             <sphereGeometry args={[coreRadius * 0.11, 20, 20]} />
             <meshPhysicalMaterial
-              color={tokens.colors.pigments.ochre}
+              color="#D97736"
               roughness={0.34}
               clearcoat={0.55}
               transparent
               opacity={0.88 * getLayerOpacity('mrna')}
-              emissive={new THREE.Color(tokens.colors.pigments.ochre)}
+              emissive={new THREE.Color('#D97736')}
               emissiveIntensity={inspectedLayer === 'mrna' ? 0.35 : 0.06}
             />
           </mesh>
@@ -855,18 +848,18 @@ function InstancedNanoparticleScene({
           {/* mRNA / sgRNA Helices */}
           <mesh geometry={mrnaStrandAGeo}>
             <meshStandardMaterial
-              color={coreStatusColor}
+              color="#F43F5E"
               roughness={0.35}
               metalness={0.15}
               transparent={inspectedLayer !== 'all'}
               opacity={getLayerOpacity('mrna')}
-              emissive={new THREE.Color(coreStatusColor)}
+              emissive={new THREE.Color('#F43F5E')}
               emissiveIntensity={inspectedLayer === 'mrna' ? 0.30 : 0.04}
             />
           </mesh>
           <mesh geometry={mrnaStrandBGeo}>
             <meshStandardMaterial
-              color={tokens.colors.status.warning}
+              color="#38D399"
               roughness={0.38}
               metalness={0.12}
               transparent={inspectedLayer !== 'all'}
@@ -875,7 +868,7 @@ function InstancedNanoparticleScene({
           </mesh>
           <mesh geometry={sgrnaGeo}>
             <meshStandardMaterial
-              color={tokens.colors.pigments.terracotta}
+              color="#38BDF8"
               roughness={0.40}
               metalness={0.12}
               transparent={inspectedLayer !== 'all'}
@@ -1247,7 +1240,7 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
 
   const hud = getHudDescription();
 
-  // Layer metadata for the inspection rack. `meta` is shown on the chip only when it is a live value.
+  // Layer metadata for the inspection rack. Exact --lipid-* color tokens synced with 3D cutaway
   const layerButtons: {
     id: keyof LayerVisibility;
     label: string;
@@ -1260,32 +1253,32 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
       label: 'PEG corona',
       meta: `${formulation.pegLipid.toFixed(1)}%`,
       detail: 'PEG-lipid corona, mol%',
-      color: tokens.colors.pigments.petrol,
+      color: '#38D399',
     },
     {
       id: 'lipids',
       label: 'Polar heads',
       detail: '2.4k lipid head groups',
-      color: tokens.colors.pigments.ochre,
+      color: '#38BDF8',
     },
     {
       id: 'tails',
       label: 'Acyl tails',
       detail: '4.8k sn-1/sn-2 acyl chains',
-      color: '#8a7458',
+      color: '#D97736',
     },
     {
       id: 'mrna',
       label: 'Cas9 + mRNA',
       detail: 'RNP and base-paired mRNA core',
-      color: tokens.colors.status.success,
+      color: '#F43F5E',
     },
     {
       id: 'apoe',
       label: 'ApoE opsonins',
       meta: `${biophysics.cellularUptakeScore}`,
       detail: 'ApoE uptake score',
-      color: tokens.colors.pigments.mauve,
+      color: '#A855F7',
     },
   ];
   const pinnedLabel = layerButtons.find((layer) => layer.id === pinnedLayer)?.label ?? '';
@@ -1305,18 +1298,16 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
 
   return (
     <section
-      className={isFullscreen ? 'nv nv--fullscreen' : 'nv'}
+      className={isFullscreen ? 'nv nv--fullscreen instrument-panel' : 'nv instrument-panel'}
       data-size={viewportSize}
       aria-labelledby={titleId}
     >
-      {/* Header: title and the actions that apply to the whole view */}
-      <header className="nv-head">
-        <h2
-          id={titleId}
-          className="font-display text-xs font-semibold tracking-tight text-[#e8dfd1]"
-        >
-          Nanoparticle structural cutaway
-        </h2>
+      {/* Header: distinct standardized module header strip */}
+      <header className="instrument-header">
+        <div className="instrument-header-title">
+          <span className="instrument-status-dot dot-lnp" />
+          <span id={titleId}>Nanoparticle structural cutaway</span>
+        </div>
         <div className="nv-actions">
           <ToolButton
             icon={autoRotate ? <Pause /> : <Play />}
@@ -1359,96 +1350,110 @@ export const NanoViewport3D: React.FC<Props> = ({ formulation, biophysics }) => 
         </div>
       </header>
 
-      {/* Rack: what the model shows */}
+      {/* Rack: grouped inside compact bordered sub-bezels */}
       <div className="nv-rack">
-        <Field label="Section">
-          <Segmented value={cutawayMode} onChange={setCutawayMode} options={SECTION_OPTIONS} />
-        </Field>
-        <Field label="Shading">
-          <Segmented value={opticalMode} onChange={setOpticalMode} options={SHADING_OPTIONS} />
-        </Field>
-        <Field label="Camera">
-          <Segmented momentary value={null} onChange={setCameraView} options={CAMERA_OPTIONS} />
-        </Field>
+        <div className="nv-sub-bezel">
+          <Field label="Section">
+            <Segmented value={cutawayMode} onChange={setCutawayMode} options={SECTION_OPTIONS} />
+          </Field>
+        </div>
+        <div className="nv-sub-bezel">
+          <Field label="Shading">
+            <Segmented value={opticalMode} onChange={setOpticalMode} options={SHADING_OPTIONS} />
+          </Field>
+        </div>
+        <div className="nv-sub-bezel">
+          <Field label="Camera">
+            <Segmented momentary value={null} onChange={setCameraView} options={CAMERA_OPTIONS} />
+          </Field>
+        </div>
 
-        <Field label="Ambient pH" className="nv-ph">
-          <div className="nv-ph__ctl">
-            <input
-              type="range"
-              min="5.0"
-              max="7.4"
-              step="0.1"
-              value={ambientPh}
-              aria-label="Ambient pH"
-              onChange={(e) => setAmbientPh(e.currentTarget.valueAsNumber)}
-            />
-            <output className="nv-ph__value">{ambientPh.toFixed(1)}</output>
-            <Segmented
-              aria-label="pH presets"
-              value={ambientPh.toFixed(1)}
-              onChange={(ph) => setAmbientPh(Number(ph))}
-              options={PH_OPTIONS}
-            />
-          </div>
-        </Field>
+        <div className="nv-sub-bezel nv-ph">
+          <Field label="Ambient pH">
+            <div className="nv-ph__ctl">
+              <input
+                type="range"
+                min="5.0"
+                max="7.4"
+                step="0.1"
+                value={ambientPh}
+                aria-label="Ambient pH"
+                onChange={(e) => setAmbientPh(e.currentTarget.valueAsNumber)}
+              />
+              <output className="nv-ph__value">{ambientPh.toFixed(1)}</output>
+              <Segmented
+                aria-label="pH presets"
+                value={ambientPh.toFixed(1)}
+                onChange={(ph) => setAmbientPh(Number(ph))}
+                options={PH_OPTIONS}
+              />
+            </div>
+          </Field>
+        </div>
 
-        <Field label="Layers">
-          <div className="nv-layers">
-            {layerButtons.map((layer) => {
-              const isVisible = visibility[layer.id];
-              const isIsolated = inspectedLayer === layer.id;
-              const isPinned = pinnedLayer === layer.id;
-              return (
-                <div
-                  key={layer.id}
-                  className="nv-layer"
-                  data-isolated={isIsolated ? '' : undefined}
-                  data-hidden={isVisible ? undefined : ''}
+        <div className="nv-sub-bezel nv-layers-bezel">
+          <Field label="Layers">
+            <div className="nv-layers">
+              {layerButtons.map((layer) => {
+                const isVisible = visibility[layer.id];
+                const isIsolated = inspectedLayer === layer.id;
+                const isPinned = pinnedLayer === layer.id;
+                return (
+                  <div
+                    key={layer.id}
+                    className="nv-layer"
+                    data-isolated={isIsolated ? '' : undefined}
+                    data-hidden={isVisible ? undefined : ''}
+                  >
+                    <button
+                      type="button"
+                      className="nv-layer__eye"
+                      aria-pressed={isVisible}
+                      aria-label={`Show ${layer.label}`}
+                      title={`${isVisible ? 'Hide' : 'Show'} ${layer.label}`}
+                      onClick={() => toggleLayer(layer.id)}
+                    >
+                      {isVisible ? <Eye /> : <EyeOff />}
+                    </button>
+                    <button
+                      type="button"
+                      className="nv-layer__name"
+                      aria-pressed={isPinned}
+                      title={`${layer.label}: ${layer.detail}. Click to isolate it in 3D.`}
+                      onClick={() => handleSelectMeshLayer(layer.id)}
+                      onMouseEnter={() => setHoveredLayer(layer.id)}
+                      onMouseLeave={() => setHoveredLayer(null)}
+                      onFocus={() => setHoveredLayer(layer.id)}
+                      onBlur={() => setHoveredLayer(null)}
+                    >
+                      <i className="ctl-swatch" style={{ backgroundColor: layer.color }} aria-hidden="true" />
+                      {layer.label}
+                      {layer.meta && <span className="nv-layer__meta">{layer.meta}</span>}
+                    </button>
+                  </div>
+                );
+              })}
+              {pinnedLayer !== 'all' && (
+                <ToolButton
+                  icon={<Lock />}
+                  pressed
+                  onClick={() => setPinnedLayer('all')}
+                  title="Show all layers again"
                 >
-                  <button
-                    type="button"
-                    className="nv-layer__eye"
-                    aria-pressed={isVisible}
-                    aria-label={`Show ${layer.label}`}
-                    title={`${isVisible ? 'Hide' : 'Show'} ${layer.label}`}
-                    onClick={() => toggleLayer(layer.id)}
-                  >
-                    {isVisible ? <Eye /> : <EyeOff />}
-                  </button>
-                  <button
-                    type="button"
-                    className="nv-layer__name"
-                    aria-pressed={isPinned}
-                    title={`${layer.label}: ${layer.detail}. Click to isolate it in 3D.`}
-                    onClick={() => handleSelectMeshLayer(layer.id)}
-                    onMouseEnter={() => setHoveredLayer(layer.id)}
-                    onMouseLeave={() => setHoveredLayer(null)}
-                    onFocus={() => setHoveredLayer(layer.id)}
-                    onBlur={() => setHoveredLayer(null)}
-                  >
-                    <i className="ctl-swatch" style={{ backgroundColor: layer.color }} aria-hidden="true" />
-                    {layer.label}
-                    {layer.meta && <span className="nv-layer__meta">{layer.meta}</span>}
-                  </button>
-                </div>
-              );
-            })}
-            {pinnedLayer !== 'all' && (
-              <ToolButton
-                icon={<Lock />}
-                pressed
-                onClick={() => setPinnedLayer('all')}
-                title="Show all layers again"
-              >
-                Unpin {pinnedLabel}
-              </ToolButton>
-            )}
-          </div>
-        </Field>
+                  Unpin {pinnedLabel}
+                </ToolButton>
+              )}
+            </div>
+          </Field>
+        </div>
       </div>
 
       {/* Stage: the WebGL canvas and its overlays */}
-      <div className="nv-stage">
+      <div className="nv-stage viewport-recessed">
+        <span className="nv-reticle nv-reticle--tl" />
+        <span className="nv-reticle nv-reticle--tr" />
+        <span className="nv-reticle nv-reticle--bl" />
+        <span className="nv-reticle nv-reticle--br" />
         <Canvas
           camera={{ position: [0, 0, targetCameraZ], fov: 40 }}
           dpr={[1, 2]}

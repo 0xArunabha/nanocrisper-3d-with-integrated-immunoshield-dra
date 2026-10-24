@@ -616,20 +616,12 @@ ${editedProtein}${guideHeader}
               const isTargetEdit = diff.classification === 'Target Edit';
               const isSilent = diff.classification === 'Silent (Synonymous)';
               const badgeBg = isTargetEdit
-                ? 'rgba(94, 148, 108, 0.22)'
+                ? '#059669'
                 : isSilent
-                ? 'rgba(77, 130, 143, 0.22)'
-                : 'rgba(189, 81, 66, 0.26)';
-              const badgeBorder = isTargetEdit
-                ? '#5e946c'
-                : isSilent
-                ? '#4d828f'
-                : '#bd5142';
-              const badgeText = isTargetEdit
-                ? '#73a880'
-                : isSilent
-                ? '#98c2cc'
-                : '#e27b6c';
+                ? '#0d9488'
+                : '#dc2626';
+              const badgeBorder = 'rgba(255, 255, 255, 0.15)';
+              const badgeText = '#FFFFFF';
 
               return (
                 <div
@@ -644,7 +636,7 @@ ${editedProtein}${guideHeader}
                       borderColor: badgeBorder,
                       color: badgeText,
                     }}
-                    className="px-1 py-0.2 rounded-[2px] border text-[9px] font-mono-seq font-semibold leading-none tracking-tighter"
+                    className="px-1.5 py-0.5 rounded-[2px] border text-[9px] font-sans font-semibold leading-none tracking-tight shadow-xs"
                   >
                     {isSilent
                       ? `=${diff.editedAA} (Syn)`

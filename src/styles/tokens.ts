@@ -1,75 +1,102 @@
 // src/styles/tokens.ts
+/**
+ * Vintage Precision Lab Instrument Design Tokens
+ * Inspired by 1970s–80s Tektronix oscilloscopes, Dieter Rams’ Braun hardware,
+ * and Hewlett-Packard benchtop clinical analyzers.
+ */
+
 export const tokens = {
   colors: {
-    // Warm carbon & dark espresso-ink surfaces (replaces cold blue-greys)
-    canvas: '#12110f',
-    surface: '#181613',
-    surfaceSubtle: '#151310',
-    surfaceRaised: '#211e1a',
-    surfaceHover: '#2a2621',
-    surfaceSelected: '#2c251d',
+    // 1. Instrument Chassis & Surfaces
+    canvas: '#141618',         // Outer application frame & page background (--bg-chassis-deep)
+    surface: '#1E2124',        // Primary module cards & control panels (--bg-panel-surface)
+    surfaceSubtle: '#16181A',  // Segmented top header strip (--bg-panel-header)
+    surfaceRaised: '#262A2E',  // Sub-cards & readouts (--bg-panel-elevated)
+    surfaceHover: '#30363B',   // Tactile hover state
+    surfaceSelected: '#2A2F34',// Active switch / selected state
+    viewportRecessed: '#0A0C0E', // Recessed optical/CRT viewport (--bg-viewport-recessed)
 
-    // Warm rules & hairlines
-    border: '#332e27',
-    borderMuted: '#24201b',
-    borderFocus: '#b88644',
+    // 2. Bezels, Hairlines & Shadows
+    border: '#2E3338',         // Standard 1px solid card/table border (--border-chassis)
+    borderMuted: '#24282D',    // Subtle internal grid border
+    borderBevelLight: '#3A4046', // Top highlight on raised buttons
+    borderBevelDark: '#0D0E10',  // Bottom edge on raised buttons
+    borderFocus: '#38BDF8',    // Active halide cyan focus ring
+    gridGraticule: '#1C2226',  // Oscilloscope graticule lines
 
-    // Parchment, warm bone, and sepia-grey typography
-    textPrimary: '#e8dfd1',
-    textSecondary: '#a69b8d',
-    textMuted: '#70675c',
-    textInverse: '#12110f',
+    // 3. Typography & Silk-Screened Ink
+    textPrimary: '#EAE6DF',    // Warm archival white (--text-primary-ink)
+    textSecondary: '#98A1A6',  // Etched steel gray (--text-secondary-ink)
+    textMuted: '#646D73',      // Coordinates, units, captions (--text-muted-ink)
+    textInverse: '#0A0C0E',
 
-    // Primary Mineral Accent: Vintage Petrol / Prussian Blue
-    accent: '#4d828f',
-    accentHover: '#5e96a3',
-    accentSubdued: 'rgba(77, 130, 143, 0.16)',
-    accentBorder: '#4d828f',
+    // 4. Clinical & Hardware Signal Indicators
+    accent: '#38BDF8',         // Optical Cyan (--signal-halide-cyan)
+    accentHover: '#56CCF2',
+    accentSubdued: 'rgba(56, 189, 248, 0.14)',
+    accentBorder: '#38BDF8',
 
-    // Vintage Pigment Status Colors (Verdigris, Raw Ochre, Cinnabar/Terracotta)
     status: {
-      success: '#5e946c',       // Oxidized Verdigris / Sage
-      successSubtle: 'rgba(94, 148, 108, 0.15)',
-      warning: '#c98a3b',       // Raw Sienna / Vintage Ochre
-      warningSubtle: 'rgba(201, 138, 59, 0.15)',
-      danger: '#bd5142',        // Cinnabar / Terracotta Red
-      dangerSubtle: 'rgba(189, 81, 66, 0.15)',
+      success: '#38D399',      // Tektronix P31 Green (--signal-phosphor-green)
+      successSubtle: 'rgba(56, 211, 153, 0.12)',
+      warning: '#F5A623',      // Vintage Amber CRT (--signal-amber-crt)
+      warningSubtle: 'rgba(245, 166, 35, 0.12)',
+      danger: '#E5484D',       // Braun Orange-Red (--signal-braun-red)
+      dangerSubtle: 'rgba(229, 72, 77, 0.14)',
     },
 
-    // Molecular & Nucleotide Pigments (for 3D LNP & Sequence Tracks)
+    // 5. Biochemical Nucleotide Channels
+    nucleotides: {
+      a: '#E5484D',            // Vermilion Red (--nt-adenine-a)
+      t: '#F5A623',            // Ochre Amber (--nt-thymine-t)
+      g: '#38D399',            // Phosphor Mint (--nt-guanine-g)
+      c: '#5B9BD5',            // Cobalt Blue (--nt-cytosine-c)
+    },
+
+    // 6. LNP Formulation Layer Channels (Synced with 3D Cutaway)
+    lipids: {
+      ionizable: '#D97736',    // Copper Orange (--lipid-ionizable)
+      helperDspc: '#38BDF8',   // Cerulean Blue (--lipid-helper-dspc)
+      peg: '#38D399',          // Phosphor Green (--lipid-peg)
+      cholesterol: '#EAB308',  // Warm Brass (--lipid-cholesterol)
+      payload: '#F43F5E',      // Crimson RNP/mRNA core (--payload-cas9-mrna)
+    },
+
+    // Backward-compatible pigments palette for existing components
     pigments: {
-      ochre: '#cfa052',         // Ionizable amine heads / Guanine
-      ivory: '#d9cdb8',         // DSPC phosphocholine heads
-      terracotta: '#b85b46',    // Cholesterol sterols / Thymine
-      petrol: '#528796',        // PEG-2000 corona / Cytosine
-      verdigris: '#639972',     // Protonated mRNA core / Adenine
-      mauve: '#9e6778',         // ApoE 4-helix opsonins / Cas9 RNP lobes
-      bronze: '#54493b',        // Hydrophobic sn-1/sn-2 acyl tails
+      ochre: '#D97736',        // Copper Orange (Ionizable)
+      ivory: '#38BDF8',        // Cerulean Blue (DSPC)
+      terracotta: '#EAB308',   // Warm Brass (Cholesterol)
+      petrol: '#38D399',       // Phosphor Green (PEG)
+      verdigris: '#38D399',    // Phosphor Mint
+      mauve: '#A855F7',        // ApoE
+      bronze: '#8A7458',       // Acyl tails
+      payload: '#F43F5E',      // Cas9 + mRNA crimson
     },
 
-    // Sequence track highlights (harmonized with vintage pigment palette)
+    // Sequence track highlights
     sequence: {
-      targetBg: 'rgba(189, 81, 66, 0.22)',
-      targetBorder: '#bd5142',
-      targetText: '#e27b6c',
-      snpBg: 'rgba(201, 138, 59, 0.22)',
-      snpBorder: '#c98a3b',
-      snpText: '#df9e51',
-      guideWindowBg: 'rgba(77, 130, 143, 0.16)',
-      guideWindowBorder: 'rgba(77, 130, 143, 0.45)',
-      guideWindowText: '#98c2cc',
-      deaminaseWindowBg: 'rgba(201, 138, 59, 0.22)',
-      deaminaseWindowBorder: 'rgba(201, 138, 59, 0.55)',
-      deaminaseWindowText: '#e0ad5a',
-      pamBg: 'rgba(207, 160, 82, 0.14)',
-      pamBorder: 'rgba(207, 160, 82, 0.50)',
-      pamText: '#d4a359',
-      protospacerUnderline: '#4d828f',
+      targetBg: 'rgba(229, 72, 77, 0.22)',
+      targetBorder: '#E5484D',
+      targetText: '#FF6B6B',
+      snpBg: 'rgba(229, 72, 77, 0.22)',
+      snpBorder: '#E5484D',
+      snpText: '#FF6B6B',
+      guideWindowBg: 'rgba(56, 189, 248, 0.18)',
+      guideWindowBorder: 'rgba(56, 189, 248, 0.60)',
+      guideWindowText: '#38BDF8',
+      deaminaseWindowBg: 'rgba(245, 166, 35, 0.20)',
+      deaminaseWindowBorder: 'rgba(245, 166, 35, 0.55)',
+      deaminaseWindowText: '#F5A623',
+      pamBg: 'rgba(56, 211, 153, 0.16)',
+      pamBorder: 'rgba(56, 211, 153, 0.50)',
+      pamText: '#38D399',
+      protospacerUnderline: '#38BDF8',
     },
   },
-  radius: '3px',
+  radius: '2px',
 
-  // Spacing scale (multiples of 4px)
+  // Spacing scale
   spacing: {
     0: '0px',
     1: '4px',
@@ -82,9 +109,9 @@ export const tokens = {
 
   // Typography scale
   typography: {
-    fontSans: '"Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    fontDisplay: '"Space Grotesk", sans-serif',
-    fontMono: '"IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace',
+    fontSans: '"Inter", "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontDisplay: '"Plus Jakarta Sans", "Inter", sans-serif',
+    fontMono: '"JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace',
     size: {
       xs: '11px',    // metadata, labels, table data, tags
       sm: '12px',    // body text, controls, inputs

@@ -84,6 +84,8 @@ class GenePreset(BaseModel):
     sasSnpId: str = "Unmapped"
     sasAlleleFreq: float = 0.05
     clinicalNote: str = ""
+    _source: str = "curated_preset"
+    isExploratoryPrototype: bool = False
 
     model_config = {"extra": "ignore"}
 
@@ -463,13 +465,14 @@ def health_check():
         "status": "online",
         "engine": "NanoCRISPR-3D Python FastAPI Bio-Engine",
         "modules": [
-            "Sugimoto (1995) RNA:DNA Nearest-Neighbor Thermodynamics (dH, dS, dG37, Tm)",
+            "Sugimoto (1995) RNA:DNA Nearest-Neighbor Thermodynamics (Genuine Published Matrix)",
             "SantaLucia (1998) Unified Target DNA Duplex & Net R-Loop Driving Energy",
-            "Turner (2004) RNA Secondary Structure Dynamic Programming (Zuker MFE & Dot-Bracket)",
+            "Simplified Turner (2004) Nearest-Neighbor Dynamic Programming (20-nt Protospacer Hairpin Filter)",
             "Spacer-Spacer Homodimerization & PAM-Proximal Seed Asymmetry Engine",
-            "ABE8e/BE4max Empirical Positional Activity",
-            "Israelachvili CPP & De Gennes LNP Biophysics",
-            "ImmunoShield South Asian MHC-I Panel",
+            "ABE8e/BE4max Empirical Positional Activity Weights",
+            "Empirical Surrogate LNP Biophysics (Calibrated to Israelachvili CPP & De Gennes Brush Scaling)",
+            "Local South Asian MHC-I Anchor-Motif Proxy (Sidney / Sette Calibrated)",
+            "Authentic Grantham (1974) Amino Acid Difference Matrix & Ensembl-ClinVar Syndication",
         ],
     }
 

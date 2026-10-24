@@ -351,7 +351,7 @@ def build_standalone_dossier_html() -> str:
     <strong style="color: #0f766e; text-transform: uppercase; font-size: 8pt; letter-spacing: 0.05em; display: block; margin-bottom: 4px;">
       Regulatory Executive Summary &amp; Cross-Domain CMC Matrix
     </strong>
-    This technical dossier establishes the formal Chemistry, Manufacturing, and Controls (CMC) strategy, analytical release criteria, and biophysical rationale for an in vivo lipid nanoparticle (LNP)-encapsulated base editor drug product targeting <strong>Sickle Cell Disease (HBB:c.20A&gt;T, p.Glu6Val)</strong>. The molecular mechanism utilizes an Adenine Base Editor (ABE8e / TadA-8e nickase SpCas9) to execute precision A&bull;T-to-G&bull;C base transitions without double-strand DNA breaks (DSBs). The delivery system employs an ionizable lipid formulation engineered with an Israelachvili Critical Packing Parameter (<strong>CPP &ge; 1.45</strong>) triggering endosomal membrane destabilization, paired with an ImmunoShield-DRA Cas9 core de-immunized against high-frequency South Asian HLA Class I/II alleles.
+    This technical dossier establishes the formal Chemistry, Manufacturing, and Controls (CMC) strategy, analytical release criteria, and biophysical rationale for an in vivo lipid nanoparticle (LNP)-encapsulated base editor drug product targeting <strong>Sickle Cell Disease (HBB:c.20A&gt;T, p.Glu6Val)</strong>. The molecular mechanism utilizes an Adenine Base Editor (ABE8e / TadA-8e nickase SpCas9) to execute precision A&bull;T-to-G&bull;C base transitions without double-strand DNA breaks (DSBs). The delivery system employs an ionizable lipid formulation modeled via an empirical surrogate biophysical framework with an Israelachvili Critical Packing Parameter (<strong>CPP &ge; 1.45</strong>) triggering endosomal membrane destabilization, paired with an ImmunoShield-DRA Cas9 core de-immunized against high-frequency South Asian HLA Class I/II alleles.
     <div style="margin-top: 6px; font-size: 8pt; color: #64748b; font-family: 'IBM Plex Mono', monospace;">
       Clinical Note: High prevalence in West Bengal &amp; Eastern India. Converts pathogenic HbS (GTG) to benign HbG-Makassar (GCG) via Adenine Base Editing.
     </div>
@@ -839,7 +839,7 @@ def build_standalone_dossier_html() -> str:
         <span style="color: #0f766e; font-weight: 700;">3.2.P.2</span> Pharmaceutical Development &amp; Formulation Biophysics
       </h3>
       <p style="margin: 0 0 8px 0; font-size: 8.5pt; color: #334155;">
-        Self-assembly and endosomal escape are governed by the Israelachvili Critical Packing Parameter (<strong>CPP = 1.59 at pH 5.5</strong>) driving the non-bilayer hexagonal H<sub>II</sub> phase transition, alongside De Gennes polymer brush scaling (<strong>Rf/D = 0.52</strong>) ensuring stealth shielding in systemic circulation.
+        Self-assembly and endosomal escape are modeled via an <strong>empirical surrogate biophysical model</strong> calibrated to benchmark microfluidic formulations. Protonation kinetics govern the Israelachvili Critical Packing Parameter (<strong>CPP = 1.59 at pH 5.5</strong>) driving the non-bilayer hexagonal H<sub>II</sub> phase transition, alongside De Gennes polymer brush scaling (<strong>Rf/D = 0.52</strong>) predicting steric stealth shielding in systemic circulation.
       </p>
 
       <!-- Figure 3.2.P.2: Henderson-Hasselbalch Ionization & Figure 3.2.P.3: SORT Organ Tropism -->
@@ -1168,7 +1168,7 @@ def build_standalone_dossier_html() -> str:
         </h2>
       </div>
       <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 10px 14px; font-size: 8.5pt; line-height: 1.6; margin-bottom: 12px;">
-        <strong>Regulatory Compliance Attestation:</strong> This document reflects algorithmic pre-IND evaluation conducted under the NanoCRISPR-3D &amp; ImmunoShield-DRA computational platform developed at MAKAUT. Biophysical calibrations adhere to peer-reviewed nearest-neighbor kinetics (Sugimoto 1995, SantaLucia 1998, Turner 2004) and self-assembly phase transition principles (Israelachvili 2011, De Gennes 1979). In vitro characterization (cryo-EM, DLS, Sanger/NGS sequencing) is required prior to Phase 1 clinical filing.
+        <strong>Regulatory Compliance Attestation:</strong> This document reflects algorithmic pre-IND evaluation conducted under the NanoCRISPR-3D &amp; ImmunoShield-DRA computational platform developed at MAKAUT. Biophysical calibrations employ peer-reviewed nearest-neighbor heteroduplex parameters (Sugimoto 1995, SantaLucia 1998) and an empirical surrogate biophysical model for LNP self-assembly and phase transitions (calibrated to Israelachvili 2011 and De Gennes 1979 scaling regimes). In vitro characterization (cryo-EM, DLS, Sanger/NGS sequencing) is required prior to Phase 1 clinical filing.
       </div>
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; font-family: 'IBM Plex Mono', monospace; font-size: 8.5pt; border-top: 1px solid #94a3b8; padding-top: 10px; margin-bottom: 10px;">

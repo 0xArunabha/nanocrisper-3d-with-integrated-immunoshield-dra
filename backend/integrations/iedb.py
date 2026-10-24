@@ -1,8 +1,8 @@
 # backend/integrations/iedb.py
 """
-Immune Epitope Database (IEDB) & HLA Class I Binding Predictor.
-Dynamic 9-mer peptide MHC-I affinity scoring tailored to high-frequency
-South Asian (SAS) haplotypes.
+Local South Asian HLA Class I Anchor-Motif Binding Proxy (Calibrated to IEDB / Sidney Anchor Classifications).
+Provides rapid, zero-latency 9-mer peptide MHC-I affinity scoring tailored to high-frequency
+South Asian (SAS) haplotypes without blocking on remote external API rate-limits.
 Author: Arunabha Ghosh (MAKAUT)
 License: Apache-2.0
 """
@@ -12,7 +12,7 @@ from typing import Any
 from backend.integrations.cache import bio_cache
 
 # Canonical peptide anchor motifs for South Asian HLA Class I alleles
-# P2 and P9 anchor preferences (normalized affinity weights)
+# P2 and P9 anchor preferences (normalized affinity weights derived from Sidney et al. / Sette et al.)
 HLA_MOTIFS: dict[str, dict[str, dict[str, float]]] = {
     "HLA-A*02:01": {
         "P2": {"L": 1.0, "M": 0.9, "I": 0.8, "V": 0.7, "A": 0.4, "T": 0.3},
@@ -40,7 +40,7 @@ HLA_MOTIFS: dict[str, dict[str, dict[str, float]]] = {
 def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
     """
     Computes MHC-I binding affinity score (0-100) and IC50 estimate (nM)
-    for a 9-mer peptide against a given HLA allele.
+    for a 9-mer peptide against a given HLA allele using a local PSSM anchor proxy.
     """
     pep = peptide.strip().upper()
     all_clean = allele.strip()
@@ -52,13 +52,24 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
             "score": 0,
             "ic50Nm": 10000.0,
             "classification": "Invalid Length (Requires 9-mer)",
+            "isFallbackAllele": False,
+            "fallbackAlleleUsed": None,
+            "note": "Peptide must be exactly 9 amino acids.",
         }
 
     cached = bio_cache.get_epitope(pep, all_clean)
     if cached:
         return cached
 
-    motif = HLA_MOTIFS.get(all_clean, HLA_MOTIFS["HLA-A*02:01"])
+    is_fallback = False
+    fallback_allele = None
+    if all_clean in HLA_MOTIFS:
+        motif = HLA_MOTIFS[all_clean]
+    else:
+        is_fallback = True
+        fallback_allele = "HLA-A*02:01"
+        motif = HLA_MOTIFS["HLA-A*02:01"]
+
     p2_weights = motif.get("P2", {})
     p9_weights = motif.get("P9", {})
 
@@ -78,10 +89,10 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
 
     normalized_score = max(5, min(98, int(base_affinity * 100)))
 
-    # Estimate IC50 in nM (lower is tighter binding)
-    # Score 90+ -> IC50 < 50 nM (Strong binder)
-    # Score 70-89 -> IC50 50-500 nM (Weak binder)
-    # Score < 70 -> IC50 > 500 nM (Non-binder)
+    # Empirical surrogate mapping composite anchor score to standard clinical IC50 thresholds:
+    # Score 80+ -> IC50 < 50 nM (Strong binder / high immunogenicity risk)
+    # Score 60-79 -> IC50 50-500 nM (Weak binder / potential epitope)
+    # Score < 60 -> IC50 > 500 nM (Non-binder / immune tolerant)
     if normalized_score >= 80:
         ic50_nm = round(50.0 * (1.0 - (normalized_score - 80) / 20.0), 1)
         classification = "Strong Binder (High Immunogenicity Risk)"
@@ -92,6 +103,12 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
         ic50_nm = round(500.0 + (100 - normalized_score) * 50.0, 1)
         classification = "Non-Binder (Immune Tolerant)"
 
+    note = (
+        f"Evaluated against South Asian panel {all_clean} anchor motif."
+        if not is_fallback
+        else f"Allele '{all_clean}' not in South Asian 5-allele panel; approximate proxy evaluated against reference HLA-A*02:01."
+    )
+
     result = {
         "peptide": pep,
         "allele": all_clean,
@@ -100,6 +117,10 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
         "classification": classification,
         "p2Anchor": p2_char,
         "p9Anchor": p9_char,
+        "isFallbackAllele": is_fallback,
+        "fallbackAlleleUsed": fallback_allele,
+        "note": note,
+        "method": "Local PSSM Anchor-Motif Surrogate (Sidney/Sette Calibrated)",
     }
 
     bio_cache.set_epitope(pep, all_clean, result)

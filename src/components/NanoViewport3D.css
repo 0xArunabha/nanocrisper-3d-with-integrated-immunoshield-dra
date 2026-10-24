@@ -1,21 +1,16 @@
 /* src/components/NanoViewport3D.css
  *
- * Chrome around the WebGL canvas, top to bottom:
- *   header   title + view actions (orbit, reset, PNG, expand, full screen)
- *   rack     what the model shows: Section, Shading, Camera, Ambient pH, Layers
- *   stage    the canvas, with zoom / scale / compartment overlays
- *   readout  live numbers (Dh, zeta, PDI, ionized %, CPP, RF/D)
- *   hud      what is being inspected, and how to interact
- * Button, segmented-control and label styles come from ui/controls.css.
+ * Vintage Precision Lab Instrument Viewport
+ * 1970s–80s Tektronix CRT & Braun Precision Controls
  */
 
 .nv {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--color-surface, #181613);
-  border: 1px solid var(--color-border, #332e27);
-  border-radius: var(--radius-default, 3px);
+  background: var(--bg-panel-surface, #1E2124);
+  border: 1px solid var(--border-chassis, #2E3338);
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -34,8 +29,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px 16px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--color-border-muted, #24201b);
+  padding: 8px 12px;
+  background: var(--bg-panel-header, #16181A);
+  border-bottom: 1px solid var(--border-chassis, #2E3338);
 }
 
 .nv-actions {
@@ -45,20 +41,30 @@
   gap: 6px;
 }
 
-/* ---- rack ---- */
+/* ---- rack: compact sub-bezels ---- */
 .nv-rack {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 10px 24px;
-  padding: 10px 12px 12px;
-  border-bottom: 1px solid var(--color-border-muted, #24201b);
-  background: var(--color-surface-subtle, #151310);
+  align-items: stretch;
+  gap: 4px 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-chassis, #2E3338);
+  background: #141618;
+}
+
+.nv-sub-bezel {
+  background: #16181A;
+  padding: 3px 5px;
+  border: 1px solid #2B3035;
+  border-radius: 3px;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .nv-ph {
-  flex: 1 1 320px;
-  max-width: 480px;
+  flex: 1 1 280px;
+  max-width: 460px;
 }
 
 .nv-ph__ctl {
@@ -80,88 +86,94 @@
   text-align: right;
   font: 600 11px/1 var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-primary, #e8dfd1);
+  color: var(--text-primary-ink, #EAE6DF);
+}
+
+.nv-layers-bezel {
+  flex: 1 1 auto;
 }
 
 .nv-layers {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 /* a layer: [eye | swatch name meta] */
 .nv-layer {
   display: inline-flex;
-  height: 24px;
-  border: 1px solid var(--color-border, #332e27);
-  border-radius: var(--radius-default, 3px);
-  background: var(--color-surface-raised, #211e1a);
+  height: 22px;
+  border: 1px solid var(--border-chassis, #2E3338);
+  border-radius: 2px;
+  background: var(--bg-panel-elevated, #262A2E);
   overflow: hidden;
 }
 
 .nv-layer[data-isolated] {
-  border-color: var(--color-accent, #4d828f);
+  border-color: var(--signal-halide-cyan, #38BDF8);
 }
 
 .nv-layer button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  font: 500 11px/1 var(--font-sans, system-ui, sans-serif);
-  color: var(--color-text-primary, #e8dfd1);
+  gap: 5px;
+  padding: 0 7px;
+  font: 500 10.5px/1 var(--font-sans, system-ui, sans-serif);
+  color: var(--text-primary-ink, #EAE6DF);
   background: transparent;
   border: 0;
   cursor: pointer;
 }
 
 .nv-layer button:hover {
-  background: var(--color-surface-hover, #2a2621);
+  background: #30363B;
 }
 
 .nv-layer button:focus-visible {
-  outline: 2px solid var(--color-accent, #4d828f);
+  outline: 2px solid var(--signal-halide-cyan, #38BDF8);
   outline-offset: -2px;
 }
 
 .nv-layer__eye {
-  padding: 0 6px !important;
-  color: var(--color-text-secondary, #a69b8d) !important;
-  border-right: 1px solid var(--color-border-muted, #24201b) !important;
+  padding: 0 5px !important;
+  color: var(--text-secondary-ink, #98A1A6) !important;
+  border-right: 1px solid #1F2327 !important;
 }
 
 .nv-layer__eye svg {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
 }
 
 .nv-layer__name[aria-pressed='true'] {
-  background: var(--color-surface-selected, #2c251d);
-  box-shadow: inset 0 -2px 0 var(--color-accent, #4d828f);
+  background: #2A2F34;
+  box-shadow: inset 0 -2px 0 var(--signal-halide-cyan, #38BDF8);
 }
 
 .nv-layer[data-hidden] .nv-layer__name {
-  color: var(--color-text-muted, #70675c);
+  color: var(--text-muted-ink, #646D73);
   text-decoration: line-through;
 }
 
 .nv-layer__meta {
-  font: 400 10px/1 var(--font-mono, monospace);
+  font: 400 9.5px/1 var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-secondary, #a69b8d);
+  color: var(--text-secondary-ink, #98A1A6);
 }
 
-/* ---- stage ---- */
+/* ---- stage: recessed CRT chamber with technical reticles ---- */
 .nv-stage {
   position: relative;
   container: nvstage / inline-size;
-  height: 420px;
-  background: var(--color-canvas, #12110f);
+  height: 335px;
+  background: radial-gradient(circle at center, #0F1215 0%, #0A0C0E 70%, #050607 100%);
+  box-shadow: var(--shadow-viewport-inset);
+  overflow: hidden;
 }
 
 .nv[data-size='expanded'] .nv-stage {
-  height: 580px;
+  height: 480px;
 }
 
 .nv--fullscreen .nv-stage {
@@ -173,19 +185,36 @@
 @media (max-width: 640px) {
   .nv-stage,
   .nv[data-size='expanded'] .nv-stage {
-    height: 340px;
+    height: 280px;
   }
 }
 
+/* Technical L-shaped corner reticles (8px in #32373B) */
+.nv-reticle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  z-index: 2;
+  border-color: #32373B;
+  border-style: solid;
+}
+.nv-reticle--tl { top: 8px; left: 8px; border-width: 1px 0 0 1px; }
+.nv-reticle--tr { top: 8px; right: 8px; border-width: 1px 1px 0 0; }
+.nv-reticle--bl { bottom: 8px; left: 8px; border-width: 0 0 1px 1px; }
+.nv-reticle--br { bottom: 8px; right: 8px; border-width: 0 1px 1px 0; }
+
 .nv-overlay {
   position: absolute;
-  z-index: 1;
+  z-index: 3;
   font: 400 10px/1.3 var(--font-mono, monospace);
-  color: var(--color-text-secondary, #a69b8d);
-  background: color-mix(in srgb, var(--color-canvas, #12110f) 82%, transparent);
-  border: 1px solid var(--color-border, #332e27);
-  border-radius: var(--radius-default, 3px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary-ink, #98A1A6);
+  background: rgba(10, 12, 14, 0.85);
+  border: 1px solid var(--border-chassis, #2E3338);
+  border-radius: 2px;
   pointer-events: none;
+  backdrop-filter: none;
 }
 
 .nv-zoom {
@@ -193,16 +222,16 @@
   left: 10px;
   display: flex;
   gap: 4px;
-  padding: 4px;
+  padding: 3px;
   pointer-events: auto;
 }
 
 .nv-badge {
   top: 10px;
   right: 10px;
-  padding: 4px 8px;
-  color: var(--color-text-primary, #e8dfd1);
-  border-color: var(--color-accent, #4d828f);
+  padding: 3px 8px;
+  color: var(--text-primary-ink, #EAE6DF);
+  border-color: var(--signal-halide-cyan, #38BDF8);
 }
 
 .nv-scale {
@@ -210,8 +239,8 @@
   bottom: 10px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 5px 8px;
+  gap: 2px;
+  padding: 4px 8px;
 }
 
 .nv-scale__bar {
@@ -223,7 +252,7 @@
 .nv-scale__rule {
   position: relative;
   height: 2px;
-  background: var(--color-text-secondary, #a69b8d);
+  background: var(--text-secondary-ink, #98A1A6);
   transition: width 0.15s;
 }
 
@@ -234,7 +263,7 @@
   top: -3px;
   width: 1px;
   height: 8px;
-  background: var(--color-text-secondary, #a69b8d);
+  background: var(--text-secondary-ink, #98A1A6);
 }
 
 .nv-scale__rule::before {
@@ -254,12 +283,11 @@
   padding: 4px 8px;
 }
 
-/* In a narrow stage the compartment badge and the scale bar would overlap, so the badge moves up above the scale. */
 @container nvstage (max-width: 440px) {
   .nv-compartment {
     right: auto;
     left: 10px;
-    bottom: 62px;
+    bottom: 58px;
   }
 }
 
@@ -267,30 +295,31 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-text-muted, #70675c);
+  background: var(--text-muted-ink, #646D73);
 }
 
 .nv-dot[data-tone='blood'] {
-  background: var(--color-accent, #4d828f);
+  background: var(--signal-halide-cyan, #38BDF8);
 }
 
 .nv-dot[data-tone='early'] {
-  background: var(--color-status-warning, #c98a3b);
+  background: var(--signal-amber-crt, #F5A623);
 }
 
 .nv-dot[data-tone='late'] {
-  background: var(--color-status-success, #5e946c);
+  background: var(--signal-phosphor-green, #38D399);
 }
 
-/* ---- readout ---- */
+/* ---- readout telemetry strip ---- */
 .nv-readout {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 20px;
+  gap: 4px 14px;
   margin: 0;
-  padding: 7px 12px;
-  border-top: 1px solid var(--color-border-muted, #24201b);
-  font: 400 11px/1.3 var(--font-mono, monospace);
+  padding: 4px 10px;
+  background: #14171A;
+  border-top: 1px solid #24282D;
+  font: 400 10.5px/1.3 var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
 }
 
@@ -304,38 +333,39 @@
   font: 600 10px/1.3 var(--font-sans, system-ui, sans-serif);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-text-secondary, #a69b8d);
+  color: var(--text-secondary-ink, #98A1A6);
 }
 
 .nv-readout dd {
   margin: 0;
-  color: var(--color-text-primary, #e8dfd1);
+  color: var(--text-primary-ink, #EAE6DF);
   font-weight: 600;
 }
 
 .nv-readout dd small {
   font-weight: 400;
   font-size: 10px;
-  color: var(--color-text-secondary, #a69b8d);
+  color: var(--text-muted-ink, #646D73);
 }
 
 /* ---- hud ---- */
 .nv-hud {
-  padding: 8px 12px 10px;
-  border-top: 1px solid var(--color-border-muted, #24201b);
+  padding: 4px 10px 5px;
+  background: #16181A;
+  border-top: 1px solid var(--border-chassis, #2E3338);
 }
 
 .nv-hud__title {
   margin: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.35;
   font-weight: 600;
-  color: var(--color-text-primary, #e8dfd1);
+  color: var(--text-primary-ink, #EAE6DF);
 }
 
 .nv-hud__detail {
   margin: 2px 0 0;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--color-text-secondary, #a69b8d);
+  color: var(--text-secondary-ink, #98A1A6);
 }

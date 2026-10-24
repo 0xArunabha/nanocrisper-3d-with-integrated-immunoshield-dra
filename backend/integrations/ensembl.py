@@ -108,12 +108,14 @@ async def lookup_ensembl_gene(
                 "sasSnpId": f"Ensembl-{transcript_id}",
                 "sasAlleleFreq": 0.05,
                 "clinicalNote": (
-                    f"Live Ensembl annotation (GRCh38). Gene: {gene_id}, "
-                    f"Canonical Transcript: {transcript_id}, Biotype: {biotype}."
+                    f"Live Ensembl CDS extraction (GRCh38, {transcript_id}). "
+                    "Note: Locus position 21 and SNP index 42 are illustrative exploratory prototype coordinates; "
+                    "set specific patient mutation coordinate for formal clinical evaluation."
                 ),
                 "ensemblGeneId": gene_id,
                 "canonicalTranscriptId": transcript_id,
                 "chromosome": str(chrom),
+                "isExploratoryPrototype": True,
                 "_source": "live_api",
             }
 

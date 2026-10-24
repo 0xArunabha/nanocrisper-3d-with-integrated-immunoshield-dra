@@ -1,12 +1,8 @@
 /* src/components/ui/controls.css
  *
- * One set of small controls for the instrument-style panels (viewport toolbar, formulation, header).
- * Rules this file keeps so the panels read as one instrument:
- *   - every button is 24 px tall, 11 px text, 1 px hairline border;
- *   - "selected" is always the same thing: the raised espresso fill plus a 2 px petrol underline;
- *   - colour is used for state only (selected = petrol, confirmed = verdigris), never as decoration;
- *   - small labels are upper-case 10 px in the secondary text colour (the muted colour is too faint at that size).
- * Colours come from the :root variables in src/index.css.
+ * Vintage Precision Lab Instrument Controls
+ * Inspired by 1970s–80s Tektronix oscilloscopes, Dieter Rams' Braun hardware,
+ * and Hewlett-Packard benchtop clinical analyzers.
  */
 
 .ctl-btn,
@@ -20,27 +16,36 @@
   height: var(--ctl-h);
   padding: 0 9px;
   font: 500 11px/1 var(--font-sans, system-ui, sans-serif);
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
   white-space: nowrap;
-  color: var(--color-text-secondary, #a69b8d);
-  background: transparent;
-  border: 1px solid transparent;
+  color: var(--text-secondary-ink, #98A1A6);
+  background: var(--bg-panel-elevated, #262A2E);
+  border: 1px solid var(--border-bevel-light, #3A4046);
+  border-bottom: 2px solid var(--border-bevel-dark, #0D0E10);
   border-radius: 2px;
   cursor: pointer;
-  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: background-color 0.1s, color 0.1s, border-color 0.1s, transform 0.05s;
 }
 
 .ctl-btn:hover,
 .ctl-seg__btn:hover,
 .ctl-nudge:hover:not(:disabled) {
-  background: var(--color-surface-hover, #2a2621);
-  color: var(--color-text-primary, #e8dfd1);
+  background: #30363B;
+  color: var(--text-primary-ink, #EAE6DF);
+}
+
+.ctl-btn:active,
+.ctl-seg__btn:active,
+.ctl-nudge:active:not(:disabled) {
+  transform: translateY(1px);
+  border-bottom: 1px solid var(--border-bevel-dark, #0D0E10);
 }
 
 .ctl-btn:focus-visible,
 .ctl-seg__btn:focus-visible,
 .ctl-nudge:focus-visible {
-  outline: 2px solid var(--color-accent, #4d828f);
+  outline: 2px solid var(--signal-halide-cyan, #38BDF8);
   outline-offset: 1px;
 }
 
@@ -48,6 +53,7 @@
 .ctl-nudge:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+  transform: none;
 }
 
 .ctl-btn svg,
@@ -59,9 +65,10 @@
 
 /* Standalone button */
 .ctl-btn {
-  background: var(--color-surface-raised, #211e1a);
-  border-color: var(--color-border, #332e27);
-  border-radius: var(--radius-default, 3px);
+  background: var(--bg-panel-elevated, #262A2E);
+  border-color: var(--border-bevel-light, #3A4046);
+  border-bottom-color: var(--border-bevel-dark, #0D0E10);
+  color: var(--text-primary-ink, #EAE6DF);
 }
 
 .ctl-btn--icon {
@@ -69,39 +76,61 @@
   padding: 0;
 }
 
-/* Selected / pressed */
+/* Selected / pressed button */
 .ctl-btn[aria-pressed='true'],
 .ctl-seg__btn[aria-pressed='true'] {
-  background: var(--color-surface-selected, #2c251d);
-  color: var(--color-text-primary, #e8dfd1);
-  box-shadow: inset 0 -2px 0 var(--color-accent, #4d828f);
+  background: #2A2F34;
+  border-color: #38BDF8;
+  border-top: 1px solid #454C54;
+  color: var(--text-primary-ink, #EAE6DF);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 /* Brief confirmation after copy / export */
 .ctl-btn[data-done] {
-  color: var(--color-status-success, #5e946c);
-  border-color: color-mix(in srgb, var(--color-status-success, #5e946c) 55%, transparent);
-  background: color-mix(in srgb, var(--color-status-success, #5e946c) 12%, var(--color-surface-raised, #211e1a));
+  color: var(--signal-phosphor-green, #38D399);
+  border-color: var(--signal-phosphor-green, #38D399);
+  background: rgba(56, 211, 153, 0.12);
 }
 
-/* Segmented control: one hairline box, options divided by 1 px rules */
+/* Segmented control: physical recessed channel */
 .ctl-seg {
   display: inline-flex;
   max-width: 100%;
-  border: 1px solid var(--color-border, #332e27);
-  border-radius: var(--radius-default, 3px);
+  border: 1px solid #2B3035;
+  border-radius: 3px;
   overflow: hidden;
-  background: var(--color-surface, #181613);
+  background: #121416;
+  padding: 2px;
+  gap: 2px;
 }
 
 .ctl-seg__btn {
-  border-radius: 0;
-  border: 0;
-  border-left: 1px solid var(--color-border-muted, #24201b);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  box-shadow: none;
+  height: 21px;
+  padding: 0 7px;
+  color: #98A1A6;
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.1s ease;
 }
 
-.ctl-seg__btn:first-child {
-  border-left: 0;
+.ctl-seg__btn:hover:not([aria-pressed='true']):not([data-active='true']) {
+  color: #EAE6DF;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ctl-seg__btn[aria-pressed='true'],
+.ctl-seg__btn[data-active='true'] {
+  background: #24292E !important;
+  color: #F0EDE6 !important;
+  font-weight: 600;
+  border: 1px solid #3A4148 !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6) !important;
 }
 
 /* Label over a control */
@@ -116,7 +145,7 @@
   font: 600 10px/1 var(--font-sans, system-ui, sans-serif);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-text-secondary, #a69b8d);
+  color: var(--text-secondary-ink, #98A1A6);
 }
 
 /* Vertical hairline between button clusters */
@@ -124,7 +153,7 @@
   align-self: stretch;
   width: 1px;
   min-height: 16px;
-  background: var(--color-border, #332e27);
+  background: var(--border-chassis, #2E3338);
 }
 
 /* Slider row: label + value on top, [-] track [+] below */
@@ -149,7 +178,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  color: var(--color-text-secondary, #a69b8d);
+  color: var(--text-secondary-ink, #98A1A6);
   font-weight: 500;
 }
 
@@ -157,7 +186,7 @@
   flex: none;
   font: 600 11px/1.3 var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
-  color: var(--color-text-primary, #e8dfd1);
+  color: var(--text-primary-ink, #EAE6DF);
 }
 
 .ctl-slider__track {
@@ -178,8 +207,9 @@
   padding: 0;
   font-family: var(--font-mono, monospace);
   font-size: 13px;
-  background: var(--color-surface-raised, #211e1a);
-  border-color: var(--color-border, #332e27);
+  background: var(--bg-panel-elevated, #262A2E);
+  border-color: var(--border-bevel-light, #3A4046);
+  border-bottom-color: var(--border-bevel-dark, #0D0E10);
   border-radius: 2px;
 }
 

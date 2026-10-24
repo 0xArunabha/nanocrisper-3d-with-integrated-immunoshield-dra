@@ -16,7 +16,8 @@ export const GENE_PRESETS: GenePreset[] = [
     sasSnpIndex: 32,
     sasSnpId: 'rs10768683 (SAS Variant)',
     sasAlleleFreq: 0.142,
-    clinicalNote: 'High prevalence in West Bengal & Eastern India. Converts pathogenic HbS (GTG) to benign HbG-Makassar (GCG) via Adenine Base Editing.'
+    clinicalNote: 'High prevalence in West Bengal & Eastern India. Converts pathogenic HbS (GTG) to benign HbG-Makassar (GCG) via Adenine Base Editing.',
+    _source: 'curated_preset',
   },
   {
     id: 'PCSK9',
@@ -31,7 +32,8 @@ export const GENE_PRESETS: GenePreset[] = [
     sasSnpIndex: 45,
     sasSnpId: 'rs505151 (SAS G670E proxy)',
     sasAlleleFreq: 0.089,
-    clinicalNote: 'Disrupts PCSK9 hepatic expression via LNP-delivered mRNA base editor to permanently lower LDL cholesterol.'
+    clinicalNote: 'Disrupts PCSK9 hepatic expression via LNP-delivered mRNA base editor to permanently lower LDL cholesterol.',
+    _source: 'curated_preset',
   },
   {
     id: 'TTR',
@@ -46,6 +48,7 @@ export const GENE_PRESETS: GenePreset[] = [
     sasSnpIndex: 52,
     sasSnpId: 'rs76992529 (SAS TTR Variant)',
     sasAlleleFreq: 0.054,
-    clinicalNote: 'Hepatic LNP delivery silences misfolded transthyretin protein production in serum.'
+    clinicalNote: 'Hepatic LNP delivery silences misfolded transthyretin protein production in serum.',
+    _source: 'curated_preset',
   }
 ];

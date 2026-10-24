@@ -86,6 +86,8 @@ export interface GenePreset {
   sasSnpId: string;
   sasAlleleFreq: number;
   clinicalNote: string;
+  _source?: 'curated_preset' | 'live_api' | 'cached' | 'fallback' | string;
+  isExploratoryPrototype?: boolean;
 }
 
 export interface BystanderEdit {

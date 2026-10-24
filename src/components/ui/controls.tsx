@@ -55,19 +55,23 @@ export function Segmented<T extends string>({
   'aria-label': ariaLabel,
 }: SegmentedProps<T>) {
   return (
-    <div className={cx('ctl-seg', className)} role={ariaLabel ? 'group' : undefined} aria-label={ariaLabel}>
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className="ctl-seg__btn"
-          title={option.title}
-          aria-pressed={momentary ? undefined : option.value === value}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
+    <div className={cx('ctl-seg viewport-control-group', className)} role={ariaLabel ? 'group' : undefined} aria-label={ariaLabel}>
+      {options.map((option) => {
+        const isActive = !momentary && option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className="ctl-seg__btn viewport-control-btn"
+            title={option.title}
+            aria-pressed={momentary ? undefined : isActive}
+            data-active={isActive ? 'true' : 'false'}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -126,6 +130,11 @@ export function NudgeSlider({
   onChange,
 }: NudgeSliderProps) {
   const stepText = `${nudge}${unit ? ` ${unit}` : ''}`;
+  const pct = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
+  const trackBg = swatch
+    ? `linear-gradient(to right, ${swatch} 0%, ${swatch} ${pct}%, #0A0C0E ${pct}%, #0A0C0E 100%)`
+    : `linear-gradient(to right, #38BDF8 0%, #38BDF8 ${pct}%, #0A0C0E ${pct}%, #0A0C0E 100%)`;
+
   return (
     <div className="ctl-slider">
       <div className="ctl-slider__head">
@@ -156,6 +165,7 @@ export function NudgeSlider({
           step={step}
           value={value}
           aria-valuetext={valueText}
+          style={{ background: trackBg }}
           onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
         />
         <button

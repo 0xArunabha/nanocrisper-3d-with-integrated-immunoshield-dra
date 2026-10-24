@@ -1,45 +1,87 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
-  --font-mono: "IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-sans: "Inter", "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
 }
 
 :root {
-  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
-  --font-mono: "IBM Plex Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* --- 1. INSTRUMENT CHASSIS & SURFACES --- */
+  --bg-chassis-deep: #141618;       /* Outer application frame & page background */
+  --bg-panel-surface: #1E2124;      /* Primary module cards & control panels */
+  --bg-panel-header: #16181A;       /* Segmented top header strip of each module */
+  --bg-panel-elevated: #262A2E;     /* Sub-cards (Benchmark formulations, Metric readouts) */
+  --bg-viewport-recessed: #0A0C0E;  /* ONLY for 3D LNP Canvas, Sequence Track, and pH Curve Plot */
 
-  --color-canvas: #12110f;
-  --color-surface: #181613;
-  --color-surface-subtle: #151310;
-  --color-surface-raised: #211e1a;
-  --color-surface-hover: #2a2621;
-  --color-surface-selected: #2c251d;
-  --color-border: #332e27;
-  --color-border-muted: #24201b;
-  --color-text-primary: #e8dfd1;
-  --color-text-secondary: #a69b8d;
-  --color-text-muted: #70675c;
-  --color-accent: #4d828f;
-  --color-accent-hover: #5e96a3;
-  --color-accent-subdued: rgba(77, 130, 143, 0.16);
-  --color-status-success: #5e946c;
-  --color-status-warning: #c98a3b;
-  --color-status-danger: #bd5142;
+  /* --- 2. BEZELS, HAIRLINES & SHADOWS --- */
+  --border-chassis: #2E3338;        /* Standard 1px solid card and table grid border */
+  --border-bevel-light: #3A4046;    /* 1px top highlight on raised tactile buttons */
+  --border-bevel-dark: #0D0E10;     /* 2px bottom edge on raised tactile buttons */
+  --grid-graticule: #1C2226;        /* Oscilloscope grid lines inside plots & sequence tracks */
+  --shadow-viewport-inset: inset 0 2px 6px rgba(0, 0, 0, 0.75);
 
-  /* Nucleotide pigments, same values as getBaseColorClass in App.tsx */
-  --color-base-a: #73a880;
-  --color-base-c: #6699a8;
-  --color-base-g: #d4a359;
-  --color-base-t: #cc6b5a;
-  --radius-default: 3px;
+  /* --- 3. TYPOGRAPHY & SILK-SCREENED INK --- */
+  --text-primary-ink: #EAE6DF;      /* Warm archival white for headers & primary metrics */
+  --text-secondary-ink: #98A1A6;    /* Etched steel gray for table headers & secondary labels */
+  --text-muted-ink: #646D73;        /* Units (mol%, nm, mV), coordinates, and helper captions */
+
+  /* --- 4. CLINICAL & HARDWARE SIGNAL INDICATORS --- */
+  --signal-phosphor-green: #38D399; /* Tektronix P31 Green: Optimal LNP, Active LED, Safe/Silent */
+  --signal-phosphor-bg: rgba(56, 211, 153, 0.12);
+  --signal-amber-crt: #F5A623;      /* Vintage Amber: Low Efficiency, 1 Bystander, Deaminase Window */
+  --signal-amber-bg: rgba(245, 166, 35, 0.12);
+  --signal-braun-red: #E5484D;      /* Braun Orange-Red: High Risk (Bystander/SNP), Target Base Edit */
+  --signal-braun-bg: rgba(229, 72, 77, 0.14);
+  --signal-halide-cyan: #38BDF8;    /* Optical Cyan: Selected sgRNA guide, pKa curve intersection */
+  --signal-halide-bg: rgba(56, 189, 248, 0.14);
+
+  /* --- 5. BIOCHEMICAL NUCLEOTIDE CHANNELS --- */
+  --nt-adenine-a: #E5484D;          /* Vermilion Red (highlights A->G base editing targets) */
+  --nt-thymine-t: #F5A623;          /* Ochre Amber */
+  --nt-guanine-g: #38D399;          /* Phosphor Mint (highlights NGG PAM sites) */
+  --nt-cytosine-c: #5B9BD5;         /* Cobalt Blue */
+
+  /* --- 6. LNP FORMULATION LAYER CHANNELS (SYNCED WITH 3D CUTAWAY) --- */
+  --lipid-ionizable: #D97736;       /* Copper Orange (47.9 mol%) */
+  --lipid-helper-dspc: #38BDF8;     /* Cerulean Blue (10.0 mol%) */
+  --lipid-peg: #38D399;             /* Phosphor Green (2.2 mol%) */
+  --lipid-cholesterol: #EAB308;     /* Warm Brass (39.9 mol%) */
+  --payload-cas9-mrna: #F43F5E;     /* Crimson RNP / mRNA core */
+
+  /* Backward Compatibility Aliases for components */
+  --font-sans: "Inter", "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+
+  --color-canvas: var(--bg-chassis-deep);
+  --color-surface: var(--bg-panel-surface);
+  --color-surface-subtle: var(--bg-panel-header);
+  --color-surface-raised: var(--bg-panel-elevated);
+  --color-surface-hover: #30363B;
+  --color-surface-selected: #2A2F34;
+  --color-border: var(--border-chassis);
+  --color-border-muted: #24282D;
+  --color-text-primary: var(--text-primary-ink);
+  --color-text-secondary: var(--text-secondary-ink);
+  --color-text-muted: var(--text-muted-ink);
+  --color-accent: var(--signal-halide-cyan);
+  --color-accent-hover: #56CCF2;
+  --color-accent-subdued: var(--signal-halide-bg);
+  --color-status-success: var(--signal-phosphor-green);
+  --color-status-warning: var(--signal-amber-crt);
+  --color-status-danger: var(--signal-braun-red);
+
+  --color-base-a: var(--nt-adenine-a);
+  --color-base-t: var(--nt-thymine-t);
+  --color-base-g: var(--nt-guanine-g);
+  --color-base-c: var(--nt-cytosine-c);
+  --radius-default: 2px;
 }
 
 body {
-  background-color: var(--color-canvas);
-  color: var(--color-text-primary);
+  background-color: var(--bg-chassis-deep);
+  color: var(--text-primary-ink);
   font-family: var(--font-sans);
   letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
@@ -51,7 +93,7 @@ body {
 /* Distinctive scientific display font for headings, badges & metrics */
 .font-display {
   font-family: var(--font-display);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 /* Monospace font for genomic sequences and numerical telemetry */
@@ -61,39 +103,51 @@ body {
   letter-spacing: 0.02em;
 }
 
-/* Flat scientific sliders */
+/* Enforce tabular numerals globally for tables and numbers */
+table, .tabular-nums, [data-tabular], .font-mono-seq {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Precision Rectangular Anodized Fader Caps (Sliders) */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  background: #211e1a;
-  height: 4px;
+  background: #0A0C0E;
+  height: 6px;
   border-radius: 2px;
+  border: 1px solid #282D33;
   outline: none;
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: #4d828f;
+  width: 10px;
+  height: 18px;
+  border-radius: 2px;
+  background: #EAE6DF;
   cursor: pointer;
-  border: 1px solid #5e96a3;
-  transition: background 0.1s;
+  border: 1px solid #0A0C0E;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition: background-color 0.1s;
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
-  background: #5e96a3;
+  background: #FFFFFF;
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  background: #4d828f;
+  width: 10px;
+  height: 18px;
+  border-radius: 2px;
+  background: #EAE6DF;
   cursor: pointer;
-  border: 1px solid #5e96a3;
+  border: 1px solid #0A0C0E;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  background: #FFFFFF;
 }
 
 /* Subtle flat scrollbar */
@@ -103,16 +157,234 @@ input[type="range"]::-moz-range-thumb {
 }
 
 ::-webkit-scrollbar-track {
-  background: #12110f;
+  background: #141618;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2621;
-  border-radius: 3px;
+  background: #2E3338;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #332e27;
+  background: #3A4046;
+}
+
+/* ==========================================================================
+   VINTAGE PRECISION LAB INSTRUMENT COMPONENT UTILITIES
+   ========================================================================== */
+
+/* Standard Module Panel Chassis */
+.instrument-panel {
+  background-color: var(--bg-panel-surface);
+  border: 1px solid var(--border-chassis);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* Standard Module Header Strip */
+.instrument-header {
+  background-color: var(--bg-panel-header);
+  border-bottom: 1px solid var(--border-chassis);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.instrument-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-primary-ink);
+}
+
+.instrument-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.dot-sequence { background-color: var(--signal-halide-cyan); }
+.dot-lnp { background-color: var(--lipid-ionizable); }
+.dot-immunology { background-color: var(--signal-phosphor-green); }
+.dot-amber { background-color: var(--signal-amber-crt); }
+.dot-danger { background-color: var(--signal-braun-red); }
+
+/* Recessed Optical / CRT Viewport Chamber */
+.viewport-recessed {
+  background-color: var(--bg-viewport-recessed);
+  border: 1px solid var(--border-chassis);
+  border-radius: 2px;
+  box-shadow: var(--shadow-viewport-inset);
+}
+
+/* Tactile Hardware Buttons */
+.tactile-btn {
+  background-color: var(--bg-panel-elevated);
+  border: 1px solid var(--border-bevel-light);
+  border-bottom: 2px solid var(--border-bevel-dark);
+  border-radius: 2px;
+  color: var(--text-primary-ink);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: background-color 0.1s, border-color 0.1s, transform 0.05s;
+}
+
+.tactile-btn:hover:not(:disabled) {
+  background-color: #30363B;
+  color: #FFFFFF;
+}
+
+.tactile-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  border-bottom: 1px solid var(--border-bevel-dark);
+}
+
+.tactile-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Modern Solid Status Badges (Standard Web Design - Boxy Style) */
+.status-badge-success,
+.status-badge-warning,
+.status-badge-danger,
+.status-badge-neutral {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 2px 6px;
+  border-radius: 2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: #FFFFFF !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  letter-spacing: 0.01em;
+}
+
+.status-badge-success {
+  background-color: #059669; /* Solid Emerald Green */
+}
+
+.status-badge-warning {
+  background-color: #d97706; /* Solid Amber Orange */
+}
+
+.status-badge-danger {
+  background-color: #dc2626; /* Solid Crimson Red */
+}
+
+.status-badge-neutral {
+  background-color: #4b5563; /* Solid Slate Gray */
+}
+
+/* 1. Fix illegible sub-labels in biophysical readout cards */
+.biophysical-card .sub-metric,
+.biophysical-card span.text-muted,
+.biophysical-card .text-muted {
+  color: #949DA3 !important; /* Etched steel: high contrast, non-distracting */
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 500;
+}
+
+/* 2. Tactile segmented bezel for 3D viewport buttons */
+.viewport-control-group,
+.nv-sub-bezel .ctl-seg {
+  display: inline-flex;
+  background: #121416;
+  padding: 2px;
+  border-radius: 3px;
+  border: 1px solid #2B3035;
+  gap: 2px;
+}
+
+.viewport-control-btn[data-active="true"],
+.viewport-control-btn[aria-pressed="true"],
+.nv-sub-bezel .ctl-seg__btn[aria-pressed="true"] {
+  background: #24292E !important;
+  color: #F0EDE6 !important;
+  font-weight: 600 !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6) !important;
+  border: 1px solid #3A424A !important;
+}
+
+/* 3. Dock ImmunoShield cleanly */
+.immunoshield-dock {
+  background: #181B1E;
+  border: 1px solid #2B3035;
+  border-radius: 3px;
+  margin-top: 4px;
+}
+
+/* Physical Segmented Hardware Switch Track */
+.switch-track-recessed {
+  display: inline-flex;
+  align-items: center;
+  background-color: #111315;
+  border: 1px solid #2E3338;
+  border-radius: 2px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.switch-btn-tactile {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary-ink);
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.switch-btn-tactile:hover {
+  color: var(--text-primary-ink);
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.switch-btn-tactile.active {
+  background-color: #2A2F34;
+  border-top: 1px solid #454C54;
+  border-left: 1px solid #353B42;
+  border-right: 1px solid #353B42;
+  border-bottom: 1px solid #141618;
+  color: var(--text-primary-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.led-indicator-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--signal-phosphor-green);
+  box-shadow: 0 0 6px rgba(56, 211, 153, 0.8), 0 0 2px var(--signal-phosphor-green);
+  flex-shrink: 0;
 }
 
 /* Regulatory & Publication Dossier Typography */
@@ -448,8 +720,8 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .dossier-document:not(.dossier-paper-page) .dossier-exec-summary {
-  background: #151310 !important;
-  color: #e8dfd1 !important;
-  border: 1px solid #24201b !important;
+  background: #16181A !important;
+  color: #EAE6DF !important;
+  border: 1px solid #2E3338 !important;
   border-left: 4px solid #0f766e !important;
 }

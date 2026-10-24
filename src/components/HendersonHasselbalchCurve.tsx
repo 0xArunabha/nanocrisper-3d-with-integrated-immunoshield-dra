@@ -5,20 +5,12 @@ import './HendersonHasselbalchCurve.css';
 
 /**
  * Interactive Henderson-Hasselbalch ionization curve with the H_II phase boundary.
- * Plots % protonation from pH 4.5 to 8.0 and marks the late endosome (pH 5.5), the apparent pKa
- * (50 %), systemic blood (pH 7.4) and the CPP >= 1.45 line where lamellar (L_alpha) packing gives
- * way to inverted hexagonal (H_II) fusion. Hover the plot to read any pH.
- *
- * The plot only draws markers and ticks. Everything that needs words (landmarks, the two phase
- * regimes) sits in a legend above it, so labels can never collide with the curve or get clipped.
- * The SVG is drawn at its real pixel width, so tick labels stay 10 px on any screen.
- *
- * The packing constants mirror calculateAmbientLnpTelemetry in engines/nanotech/lnpSimulator.ts.
+ * Rendered in Vintage Tektronix oscilloscope graticule aesthetic.
  */
 const CPP_BASE = 1.08;
 const CPP_SLOPE = 0.58;
 const HII_CPP_THRESHOLD = 1.45;
-/** Protonation (%) at which CPP reaches the H_II threshold. */
+/** Protonation (%) at which CPP reaches the H_II threshold (~63.8%). */
 const HII_ALPHA_PCT = ((HII_CPP_THRESHOLD - CPP_BASE) / CPP_SLOPE) * 100;
 
 const PH_MIN = 4.5;
@@ -27,22 +19,23 @@ const ENDOSOME_PH = 5.5;
 const BLOOD_PH = 7.4;
 const PH_TICKS = [4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0];
 
-// Pigments used for the same landmark in the plot and in the legend.
+// Tektronix & Braun Clinical Color Channels
 const COLOR = {
-  endosome: '#5e946c',
-  pka: '#cfa052',
-  blood: '#4d828f',
-  hii: '#b85b46',
-  lamellar: '#a69b8d',
+  endosome: '#38D399',  // Phosphor Green (Late endosome pH 5.5 / HII escape)
+  pka: '#38BDF8',       // Optical Cyan (pKa intersection)
+  blood: '#98A1A6',     // Archival Steel
+  curve: '#F5A623',     // Tektronix Amber CRT
+  hiiFill: 'rgba(56, 211, 153, 0.08)',
+  grid: '#1C2226',      // Graticule gridline
 };
 
-// Plot size in CSS pixels. The height follows the width, within limits.
+// Plot size in CSS pixels
 const DEFAULT_WIDTH = 520;
 const MIN_WIDTH = 240;
-const ASPECT = 0.36;
-const MIN_HEIGHT = 150;
-const MAX_HEIGHT = 240;
-const PAD = { top: 14, right: 18, bottom: 32, left: 42 };
+const ASPECT = 0.28;
+const MIN_HEIGHT = 120;
+const MAX_HEIGHT = 175;
+const PAD = { top: 12, right: 18, bottom: 28, left: 38 };
 
 const getCpp = (alphaPct: number) => Number((CPP_BASE + (alphaPct / 100) * CPP_SLOPE).toFixed(2));
 
@@ -51,7 +44,6 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
   const [width, setWidth] = useState<number>(DEFAULT_WIDTH);
   const plotRef = useRef<HTMLDivElement>(null);
 
-  // Measure the plot so the SVG is drawn 1:1 instead of being scaled (which would scale its text too).
   useLayoutEffect(() => {
     const el = plotRef.current;
     if (!el) return;
@@ -102,7 +94,6 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
     setHoveredPh(Number((PH_MIN + ((x - PAD.left) / plotW) * (PH_MAX - PH_MIN)).toFixed(2)));
   };
 
-  // The readout is centred on the cursor, but shifted so it never leaves the plot (it is about 270 px wide).
   const tipHalf = Math.min(136, (width - 8) / 2);
   const tipLeft = hover ? Math.min(width - tipHalf - 4, Math.max(tipHalf + 4, hover.x)) : 0;
 
@@ -136,20 +127,14 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
           <b>{endosomeAlpha.toFixed(0)}%</b>
         </li>
         <li>
-          <i className="hh-legend__band" style={{ backgroundColor: COLOR.hii }} />
+          <i className="hh-legend__band" style={{ backgroundColor: COLOR.endosome }} />
           <span>
             H<sub>II</sub> fusion: CPP ≥ {HII_CPP_THRESHOLD} (α ≥ {Math.round(HII_ALPHA_PCT)}%)
           </span>
         </li>
-        <li>
-          <i className="hh-legend__band" style={{ backgroundColor: COLOR.lamellar }} />
-          <span>
-            L<sub>α</sub> lamellar: CPP &lt; {HII_CPP_THRESHOLD}
-          </span>
-        </li>
       </ul>
 
-      <div className="hh-plot" ref={plotRef}>
+      <div className="hh-plot viewport-recessed" ref={plotRef}>
         <svg
           viewBox={`0 0 ${width} ${height}`}
           width={width}
@@ -161,31 +146,46 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
           onPointerLeave={() => setHoveredPh(null)}
         >
           <defs>
-            <linearGradient id="hhFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={COLOR.blood} stopOpacity="0.32" />
-              <stop offset="70%" stopColor={COLOR.blood} stopOpacity="0.08" />
-              <stop offset="100%" stopColor={COLOR.blood} stopOpacity="0" />
+            <linearGradient id="hhAmberArea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#F5A623" stopOpacity="0.22" />
+              <stop offset="70%" stopColor="#F5A623" stopOpacity="0.05" />
+              <stop offset="100%" stopColor="#F5A623" stopOpacity="0.0" />
             </linearGradient>
-            <linearGradient id="hhStroke" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor={COLOR.endosome} />
-              <stop offset="45%" stopColor={COLOR.pka} />
-              <stop offset="85%" stopColor={COLOR.blood} />
-            </linearGradient>
+            <filter id="amberGlow" x="-10%" y="-10%" width="120%" height="120%">
+              <feDropShadow dx="0" dy="0" stdDeviation="1.5" floodColor="#F5A623" floodOpacity="0.5" />
+            </filter>
           </defs>
 
-          {/* H_II regime: CPP >= 1.45 */}
-          <rect x={PAD.left} y={PAD.top} width={plotW} height={Math.max(0, yHii - PAD.top)} fill={COLOR.hii} fillOpacity="0.08" />
+          {/* H_II Endosomal Escape Zone: CPP >= 1.45 (between pH 5.5 and ~6.35) */}
+          <rect
+            x={PAD.left}
+            y={PAD.top}
+            width={plotW}
+            height={Math.max(0, yHii - PAD.top)}
+            fill={COLOR.hiiFill}
+          />
           <line
             x1={PAD.left}
             y1={yHii}
             x2={width - PAD.right}
             y2={yHii}
-            stroke={COLOR.hii}
+            stroke={COLOR.endosome}
             strokeDasharray="4 3"
-            strokeOpacity="0.75"
+            strokeOpacity="0.8"
           />
+          <text
+            x={width - PAD.right - 4}
+            y={yHii - 4}
+            textAnchor="end"
+            fontSize="9"
+            fontFamily="monospace"
+            fill={COLOR.endosome}
+            opacity="0.9"
+          >
+            HII Fusion Threshold (CPP ≥ 1.45)
+          </text>
 
-          {/* % protonation grid */}
+          {/* % protonation graticule */}
           {[0, 25, 50, 75, 100].map((pct) => (
             <g key={pct}>
               <line
@@ -193,16 +193,16 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
                 y1={getY(pct)}
                 x2={width - PAD.right}
                 y2={getY(pct)}
-                stroke="#24201b"
+                stroke={COLOR.grid}
                 strokeDasharray={pct === 50 ? '3 3' : undefined}
               />
-              <text x={PAD.left - 6} y={getY(pct) + 3.5} textAnchor="end" fontSize="10" fontFamily="monospace" fill="#a69b8d">
+              <text x={PAD.left - 6} y={getY(pct) + 3.5} textAnchor="end" fontSize="10" fontFamily="monospace" fill="#98A1A6">
                 {pct}%
               </text>
             </g>
           ))}
 
-          {/* pH grid */}
+          {/* pH graticule */}
           {PH_TICKS.map((ph) => {
             const landmark = ph === ENDOSOME_PH;
             return (
@@ -212,7 +212,7 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
                   y1={PAD.top}
                   x2={getX(ph)}
                   y2={yBottom}
-                  stroke="#24201b"
+                  stroke={COLOR.grid}
                   strokeDasharray={landmark ? '2 2' : undefined}
                 />
                 <text
@@ -221,7 +221,7 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
                   textAnchor="middle"
                   fontSize="10"
                   fontFamily="monospace"
-                  fill={landmark ? '#e8dfd1' : '#a69b8d'}
+                  fill={landmark ? '#EAE6DF' : '#98A1A6'}
                   fontWeight={landmark ? 'bold' : 'normal'}
                 >
                   {ph.toFixed(1)}
@@ -230,29 +230,62 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
             );
           })}
 
-          <path d={areaPath} fill="url(#hhFill)" />
-          <path d={linePath} fill="none" stroke="url(#hhStroke)" strokeWidth="2" strokeLinecap="round" />
+          <path d={areaPath} fill="url(#hhAmberArea)" />
+          {/* Tektronix Amber Protonation Curve */}
+          <path d={linePath} fill="none" stroke={COLOR.curve} strokeWidth="2" strokeLinecap="round" filter="url(#amberGlow)" />
 
-          {/* Landmarks: late endosome, pKa, blood */}
-          <line x1={getX(ENDOSOME_PH)} y1={getY(endosomeAlpha)} x2={getX(ENDOSOME_PH)} y2={yBottom} stroke={COLOR.endosome} strokeWidth="1.2" strokeDasharray="3 2" />
-          <circle cx={getX(ENDOSOME_PH)} cy={getY(endosomeAlpha)} r="4" fill={COLOR.endosome} stroke="#181613" strokeWidth="1.5" />
+          {/* Callout Lines: Late Endosome pH 5.5 (88%) */}
+          <line
+            x1={getX(ENDOSOME_PH)}
+            y1={getY(endosomeAlpha)}
+            x2={getX(ENDOSOME_PH)}
+            y2={yBottom}
+            stroke={COLOR.endosome}
+            strokeWidth="1.5"
+            strokeDasharray="3 2"
+          />
+          <circle cx={getX(ENDOSOME_PH)} cy={getY(endosomeAlpha)} r="4.5" fill={COLOR.endosome} stroke="#0A0C0E" strokeWidth="1.5" />
 
-          <line x1={getX(lipidPka)} y1={getY(50)} x2={getX(lipidPka)} y2={yBottom} stroke={COLOR.pka} strokeDasharray="2 2" />
-          <line x1={PAD.left} y1={getY(50)} x2={getX(lipidPka)} y2={getY(50)} stroke={COLOR.pka} strokeDasharray="2 2" />
-          <circle cx={getX(lipidPka)} cy={getY(50)} r="3.5" fill={COLOR.pka} stroke="#181613" strokeWidth="1.5" />
+          {/* Callout Lines: pKa (50%) */}
+          <line
+            x1={getX(lipidPka)}
+            y1={getY(50)}
+            x2={getX(lipidPka)}
+            y2={yBottom}
+            stroke={COLOR.pka}
+            strokeDasharray="2 2"
+          />
+          <line
+            x1={PAD.left}
+            y1={getY(50)}
+            x2={getX(lipidPka)}
+            y2={getY(50)}
+            stroke={COLOR.pka}
+            strokeDasharray="2 2"
+          />
+          <circle cx={getX(lipidPka)} cy={getY(50)} r="4" fill={COLOR.pka} stroke="#0A0C0E" strokeWidth="1.5" />
 
-          <line x1={getX(BLOOD_PH)} y1={getY(bloodAlpha)} x2={getX(BLOOD_PH)} y2={yBottom} stroke={COLOR.blood} strokeWidth="1.2" strokeDasharray="3 2" />
-          <circle cx={getX(BLOOD_PH)} cy={getY(bloodAlpha)} r="4" fill={COLOR.blood} stroke="#181613" strokeWidth="1.5" />
+          {/* Callout Lines: Blood pH 7.4 (8%) */}
+          <line
+            x1={getX(BLOOD_PH)}
+            y1={getY(bloodAlpha)}
+            x2={getX(BLOOD_PH)}
+            y2={yBottom}
+            stroke={COLOR.blood}
+            strokeWidth="1.5"
+            strokeDasharray="3 2"
+          />
+          <circle cx={getX(BLOOD_PH)} cy={getY(bloodAlpha)} r="4" fill={COLOR.blood} stroke="#0A0C0E" strokeWidth="1.5" />
 
           {/* Hover crosshair */}
           {hover && (
             <g>
-              <line x1={hover.x} y1={PAD.top} x2={hover.x} y2={yBottom} stroke="#e8dfd1" strokeDasharray="2 2" strokeOpacity="0.8" />
-              <circle cx={hover.x} cy={hover.y} r="4.5" fill="#e8dfd1" stroke="#12110f" strokeWidth="2" />
+              <line x1={hover.x} y1={PAD.top} x2={hover.x} y2={yBottom} stroke="#EAE6DF" strokeDasharray="2 2" strokeOpacity="0.8" />
+              <circle cx={hover.x} cy={hover.y} r="5" fill="#EAE6DF" stroke="#0A0C0E" strokeWidth="2" />
             </g>
           )}
 
-          <text x={PAD.left + plotW / 2} y={height - 3} textAnchor="middle" fontSize="10" fontFamily="sans-serif" fill="#a69b8d">
+          <text x={PAD.left + plotW / 2} y={height - 3} textAnchor="middle" fontSize="10" fontFamily="sans-serif" fill="#98A1A6">
             Ambient pH
           </text>
           <text
@@ -262,7 +295,7 @@ export function HendersonHasselbalchCurve({ lipidPka }: { lipidPka: number }) {
             textAnchor="middle"
             fontSize="10"
             fontFamily="sans-serif"
-            fill="#a69b8d"
+            fill="#98A1A6"
           >
             Protonated (α)
           </text>

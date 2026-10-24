@@ -2,9 +2,9 @@
 """
 NanoCRISPR-3D & ImmunoShield-DRA — Advanced Thermodynamic & Secondary Structure Engine
 Implements:
-1. Sugimoto et al. (1995) nearest-neighbor RNA:DNA heteroduplex enthalpy, entropy, free energy (dG_37), and Tm.
+1. Sugimoto et al. (1995) nearest-neighbor RNA:DNA heteroduplex enthalpy, entropy, free energy (dG_37), and Tm (genuine published matrix).
 2. SantaLucia (1998) unified DNA:DNA duplex stability for genomic target unwinding cost and net R-loop propagation dG.
-3. Turner (2004) RNA nearest-neighbor dynamic programming (Zuker / Nussinov MFE algorithm) for spacer hairpin folding.
+3. Simplified Turner (2004) nearest-neighbor dynamic programming (Zuker / Nussinov MFE algorithm) for 20-nt protospacer hairpin screening.
 4. Spacer-spacer homodimerization and PAM-proximal seed vs. distal thermodynamic partitioning.
 
 Author: Arunabha Ghosh (MAKAUT)
@@ -201,9 +201,10 @@ def hairpin_loop_penalty(size: int) -> float:
 
 def predict_rna_secondary_structure(sequence: str) -> SecondaryStructureResult:
     """
-    Computes minimum free energy (MFE) secondary structure of an RNA spacer via dynamic
-    programming (Zuker / Nussinov algorithm) with Turner (2004) nearest-neighbor stacking
-    and loop destabilization penalties.
+    Computes minimum free energy (MFE) secondary structure of an RNA spacer via a simplified
+    dynamic programming nearest-neighbor model (Zuker / Nussinov algorithm with Turner 2004
+    stacking energies and empirical loop penalties). Serves as a rapid steric filter for 20-nt
+    protospacer hairpin screening prior to heavier partition-function packages (e.g. ViennaRNA).
     """
     rna_seq = sequence.upper().replace("T", "U")
     n = len(rna_seq)
