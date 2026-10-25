@@ -15,8 +15,8 @@ export interface AmbientLnpTelemetry {
 
 /**
  * Computes real-time ambient pH titration & polymer scaling telemetry for the 3D viewport HUD.
- * Evaluates an Empirical Surrogate Biophysical Model combining Henderson-Hasselbalch protonation,
- * De Gennes polymer brush scaling, and phenomenological Israelachvili Critical Packing Parameter (CPP).
+ * Keeps all Henderson-Hasselbalch, De Gennes, Israelachvili CPP, and Stokes-Einstein math
+ * strictly inside the nanotech engine layer.
  */
 export function calculateAmbientLnpTelemetry(
   form: LnpFormulation,
@@ -34,10 +34,8 @@ export function calculateAmbientLnpTelemetry(
   const liveProtonationFraction = 1 / (1 + Math.pow(10, ambientPh - form.lipidPka));
   const liveIonizationPct = Math.round(liveProtonationFraction * 100);
 
-  // Empirical Surrogate Israelachvili Critical Packing Parameter (CPP = v / (a0 * lc))
-  // Protonation shrinks headgroup area a0, driving lamellar (CPP ~ 0.95) to inverted hexagonal (CPP >= 1.45)
-  const normIon = form.ionizableLipid;
-  const cpp = Number((1.08 + (liveIonizationPct / 100) * 0.58 + (normIon - 50.0) * 0.002).toFixed(2));
+  // Israelachvili Critical Packing Parameter (CPP = v / (a0 * lc))
+  const cpp = Number((1.08 + (liveIonizationPct / 100) * 0.58).toFixed(2));
 
   // Stokes-Einstein diffusivity in blood at 37°C (D0 = kB*T / (3*pi*eta*Dh))
   const stokesDiffusivity = Number((458 / Math.max(1, biophysics.diameterNm)).toFixed(1));
@@ -57,17 +55,23 @@ export function calculateAmbientLnpTelemetry(
 }
 
 /**
- * Nanotech LNP Empirical Surrogate Biophysical Simulator.
- * Reduced-order phenomenological response surface modeling 4-component lipid nanoparticle assembly,
- * Henderson-Hasselbalch ionization kinetics, De Gennes polymer brush scaling,
- * Israelachvili Critical Packing Parameter (CPP) phase transitions, SAXS Bragg repeat distance,
- * and SORT organ biodistribution calibrated to benchmark literature (Cullis, Hope, Siegwart).
+ * Nanotech LNP Biophysical & CMC Simulation Engine.
+ *
+ * What is exact and what is not:
+ *  - Ionization at a given pH is the Henderson-Hasselbalch value for the lipid's apparent pKa. Exact.
+ *  - The De Gennes ratio R_F/D uses the textbook PEG-2000 brush formula. Textbook scaling, not a measurement.
+ *  - Hydrodynamic diameter, PDI, zeta potential, uptake score, endosomal escape, CPP and the organ split are
+ *    empirical surrogates: smooth trends with coefficients set by hand so that known formulations land near
+ *    published values. They are not fitted to a data set, carry no error bars, and should be used to compare
+ *    formulations, not to predict a measurement.
+ *  - The class in `stabilityStatus` comes from fixed thresholds on those surrogates; "Optimal Clinical LNP"
+ *    is only the name of the class that triggers none of the warnings.
+ * The Python backend implements the same formulas (see backend/main.py, simulate_lnp).
  */
 export function simulateLnpBiophysics(form: LnpFormulation): LnpBiophysicsResult {
   const rawTotal = form.ionizableLipid + form.dspcHelper + form.cholesterol + form.pegLipid;
   const total = rawTotal > 0 ? rawTotal : 100;
 
-  const normIon = (form.ionizableLipid / total) * 100;
   const normDspc = (form.dspcHelper / total) * 100;
   const normChol = (form.cholesterol / total) * 100;
   const normPeg = Math.max(0.1, (form.pegLipid / total) * 100);
@@ -141,10 +145,8 @@ export function simulateLnpBiophysics(form: LnpFormulation): LnpBiophysicsResult
   const graftingDist = Math.sqrt(0.65 / pegMolFraction);
   const deGennesRfOverD = Number((3.43 / graftingDist).toFixed(2));
 
-  // Empirical Surrogate Israelachvili Critical Packing Parameter (CPP) in late endosome (pH 5.5)
-  const criticalPackingParam = Number(
-    (1.08 + (endosomalProtonationPct / 100) * 0.58 + (normIon - 50.0) * 0.002).toFixed(2)
-  );
+  // Israelachvili Critical Packing Parameter (CPP) in late endosome (pH 5.5)
+  const criticalPackingParam = Number((1.08 + (endosomalProtonationPct / 100) * 0.58).toFixed(2));
 
   // SAXS q_1 Bragg Peak Repeat Spacing (nm)
   const saxsBraggSpacingNm = Number((6.45 - (form.npRatio - 3) * 0.08).toFixed(2));

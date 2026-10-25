@@ -5,6 +5,7 @@ from backend.integrations.clinvar import (
     lookup_variant_details,
     annotate_bystander_pathogenicity,
 )
+from backend.integrations.grantham import grantham_class, grantham_distance
 from backend.integrations.iedb import (
     score_peptide_hla_binding,
     scan_protein_for_epitopes,
@@ -20,6 +21,8 @@ __all__ = [
     "lookup_ensembl_gene",
     "lookup_variant_details",
     "annotate_bystander_pathogenicity",
+    "grantham_class",
+    "grantham_distance",
     "score_peptide_hla_binding",
     "scan_protein_for_epitopes",
     "calculate_melting_temp",

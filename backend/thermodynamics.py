@@ -1,11 +1,23 @@
 # backend/thermodynamics.py
 """
-NanoCRISPR-3D & ImmunoShield-DRA — Advanced Thermodynamic & Secondary Structure Engine
-Implements:
-1. Sugimoto et al. (1995) nearest-neighbor RNA:DNA heteroduplex enthalpy, entropy, free energy (dG_37), and Tm (genuine published matrix).
-2. SantaLucia (1998) unified DNA:DNA duplex stability for genomic target unwinding cost and net R-loop propagation dG.
-3. Simplified Turner (2004) nearest-neighbor dynamic programming (Zuker / Nussinov MFE algorithm) for 20-nt protospacer hairpin screening.
-4. Spacer-spacer homodimerization and PAM-proximal seed vs. distal thermodynamic partitioning.
+NanoCRISPR-3D & ImmunoShield-DRA - thermodynamic and secondary-structure estimates
+
+What each part is, so results are quoted for what they are:
+
+1. RNA:DNA hybrid energy: nearest-neighbor sums with the Sugimoto et al. (1995) parameters.
+   Standard method. The parameters were measured in 1 M NaCl; the code applies a simple salt
+   correction for 150 mM, which is an approximation.
+2. DNA:DNA duplex energy: nearest-neighbor sums with the SantaLucia (1998) unified parameters,
+   with the same simple salt correction. Initiation terms assume G:C-terminated ends.
+3. Spacer hairpin folding: a SIMPLIFIED Nussinov-style dynamic program that uses Turner-derived
+   stack and loop numbers. It is not Zuker/Turner 2004 MFE and it is not ViennaRNA or mfold: it has
+   no multiloop terms, no dangling-end or terminal-mismatch terms, no special hairpin bonuses, only
+   some stack steps are tabulated (the rest default to -1.8 kcal/mol), the interior-loop cost is a
+   linear guess, and the traceback only follows stacked helices. Use it to compare spacers with each
+   other, not to quote a folding energy.
+4. Homodimer and seed/distal partitioning: the same nearest-neighbor sums applied to sub-sequences.
+   "R-loop net dG" subtracts two separate duplex energies; it is not a model of Cas9 R-loop
+   propagation (no PAM, protein or supercoiling terms).
 
 Author: Arunabha Ghosh (MAKAUT)
 License: Apache-2.0
@@ -20,14 +32,21 @@ from pydantic import BaseModel, Field
 # 1. NEAREST-NEIGHBOR THERMODYNAMIC PARAMETER MATRICES
 # ============================================================================
 
-# Sugimoto et al. (Biochemistry 1995, 34, 11211–11216)
-# RNA:DNA heteroduplex parameters: dH in kcal/mol, dS in cal/(mol*K)
-# 5'-rX rY-3' paired with 3'-dComp(rX) dComp(rY)-5'
+# Sugimoto et al. (Biochemistry 1995, 34, 11211-11216)
+# RNA:DNA heteroduplex parameters: dH in kcal/mol, dS in cal/(mol*K), measured in 1 M NaCl.
+# Key "XY" = RNA 5'-rXrY-3' paired with DNA 3'-dX'dY'-5' (T stands for U).
+#
+# These 16 rows were re-entered. The table that was here before differed from the published one in
+# eight rows (AC, AG, CA, CT, TA, TC, TG and TT had other values), so the energies it produced were
+# not Sugimoto's. The values below are checked for internal consistency (dG37 = dH - 310.15 * dS / 1000
+# against the published dG37 column) by backend/checks/check_science.py, but could not be compared
+# with the paper itself from the environment this was written in: check Table 3 of the paper before
+# quoting a number from this module.
 RNA_DNA_NN_PARAMS: dict[str, tuple[float, float]] = {
-    "AA": (-7.8, -21.9), "AT": (-8.3, -23.9), "AC": (-9.1, -23.5), "AG": (-7.0, -16.4),
-    "TA": (-4.2, -10.0), "TT": (-6.1, -16.9), "TC": (-7.0, -17.6), "TG": (-5.8, -12.3),
-    "CA": (-9.0, -23.5), "CT": (-7.0, -16.4), "CC": (-9.3, -23.2), "CG": (-16.3, -47.1),
-    "GA": (-5.5, -13.5), "GT": (-7.8, -21.6), "GC": (-8.0, -17.1), "GG": (-12.8, -31.9),
+    "AA": (-7.8, -21.9), "AC": (-5.9, -12.3), "AG": (-9.1, -23.5), "AT": (-8.3, -23.9),
+    "CA": (-9.0, -26.1), "CC": (-9.3, -23.2), "CG": (-16.3, -47.1), "CT": (-7.0, -19.7),
+    "GA": (-5.5, -13.5), "GC": (-8.0, -17.1), "GG": (-12.8, -31.9), "GT": (-7.8, -21.6),
+    "TA": (-7.8, -23.2), "TC": (-8.6, -22.9), "TG": (-10.4, -28.4), "TT": (-11.5, -36.4),
 }
 
 # SantaLucia (Proc. Natl. Acad. Sci. USA 1998, 95, 1460–1465)
@@ -43,7 +62,9 @@ DNA_DNA_NN_PARAMS: dict[str, tuple[float, float]] = {
     "GG": (-8.0, -19.9), "CC": (-8.0, -19.9),
 }
 
-# Turner (2004) / Mathews et al. (2004) RNA:RNA Stacking Free Energies (dG_37 in kcal/mol)
+# RNA:RNA stacking free energies (dG_37, kcal/mol) in the style of the Turner (2004) nearest-neighbor
+# set. This is a partial, rounded table: it has not been checked entry by entry against the published
+# values, GU steps are approximate, and any step missing here falls back to -1.8 in the folding code.
 # Format: ((5'-rA rB-3'), (3'-rA' rB'-5'))
 RNA_RNA_STACKING_DG37: dict[tuple[str, str], float] = {
     ("GC", "CG"): -3.3, ("CG", "GC"): -2.4, ("GG", "CC"): -3.3, ("CC", "GG"): -3.3,
@@ -82,7 +103,7 @@ class ThermodynamicProfile(BaseModel):
     dnaDnaDg37: float = Field(..., description="Target genomic DNA:DNA duplex stability (kcal/mol)")
     rLoopNetDg: float = Field(..., description="Net R-loop formation driving energy: dG(hybrid) - dG(target DNA)")
     isRLoopThermodynamicallyFavored: bool = Field(..., description="True if net R-loop formation is spontaneous (dG_net < 0)")
-    hairpinDg: float = Field(..., description="Minimum free energy (MFE) of spacer RNA secondary structure in kcal/mol")
+    hairpinDg: float = Field(..., description="Energy of the best fold found by the simplified folding routine, in kcal/mol (not a full MFE; see module docstring)")
     hairpinStructure: str = Field(..., description="Dot-bracket notation of the spacer secondary structure")
     hairpinStemLength: int = Field(..., description="Longest base-paired stem length in spacer")
     hairpinLoopSize: int = Field(..., description="Loop size of the primary hairpin")
@@ -134,8 +155,10 @@ def calc_rna_dna_thermodynamics(
     oligo_conc_molar: float = 2.5e-7,
 ) -> tuple[float, float, float, float]:
     """
-    Computes Sugimoto nearest-neighbor RNA:DNA heteroduplex enthalpy, entropy, free energy,
-    and melting temperature under specified monovalent cation concentration.
+    Sugimoto nearest-neighbor sum for the RNA:DNA hybrid: enthalpy, entropy, dG at 37 C and Tm.
+
+    Parameters are from 1 M NaCl; the monovalent-salt term used here is a simple approximation
+    (0.368 * (N - 1) * ln[Na+] added to the entropy). Treat the numbers as estimates.
     """
     clean_spacer = spacer.upper().replace("U", "T")
     # Initiation constants for RNA:DNA hybrid
@@ -189,7 +212,7 @@ def calc_dna_dna_duplex(
 
 
 def hairpin_loop_penalty(size: int) -> float:
-    """Turner (2004) loop destabilization penalty function (kcal/mol)."""
+    """Hairpin loop initiation penalty (kcal/mol), Turner-style: tabulated for 3-6 nt, log extrapolation above."""
     if size < 3:
         return float("inf")  # Steric impossibility
     penalties = {3: 5.4, 4: 5.6, 5: 5.7, 6: 5.8}
@@ -201,10 +224,9 @@ def hairpin_loop_penalty(size: int) -> float:
 
 def predict_rna_secondary_structure(sequence: str) -> SecondaryStructureResult:
     """
-    Computes minimum free energy (MFE) secondary structure of an RNA spacer via a simplified
-    dynamic programming nearest-neighbor model (Zuker / Nussinov algorithm with Turner 2004
-    stacking energies and empirical loop penalties). Serves as a rapid steric filter for 20-nt
-    protospacer hairpin screening prior to heavier partition-function packages (e.g. ViennaRNA).
+    Simplified minimum-free-energy fold of a short RNA spacer (Nussinov-style dynamic program with
+    Turner-derived stack and hairpin terms). Not Zuker/Turner 2004 and not ViennaRNA: see the module
+    docstring for what is missing. Good for ranking spacers against each other, not for quoting an MFE.
     """
     rna_seq = sequence.upper().replace("T", "U")
     n = len(rna_seq)
@@ -443,7 +465,7 @@ def compute_full_thermodynamic_profile(
     r_loop_net = round(hybrid_dg - dna_dg, 2)
     is_r_loop_favored = r_loop_net < 0.0
 
-    # 4. RNA Secondary Structure / Hairpin MFE (Turner 2004 DP)
+    # 4. RNA secondary structure / hairpin energy (simplified Turner-style DP)
     sec_struct = predict_rna_secondary_structure(clean_spacer)
 
     # 5. Segmented Seed vs. Distal partitioning (Seed: positions 11-20, Distal: positions 1-10)

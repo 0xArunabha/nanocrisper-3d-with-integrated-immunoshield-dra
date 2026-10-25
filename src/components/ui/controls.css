@@ -221,3 +221,74 @@
   height: 8px;
   border-radius: 1px;
 }
+
+/* Status bar & Pipeline strip additions */
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 11px/1 var(--font-sans, system-ui, sans-serif);
+  color: var(--text-secondary-ink, #98a1a6);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #555d65;
+  transition: background-color 0.2s, box-shadow 0.2s;
+}
+
+.status-dot--online {
+  background-color: #38d399;
+  box-shadow: 0 0 6px rgba(56, 211, 153, 0.4);
+}
+
+.status-dot--offline {
+  background-color: #70675c;
+}
+
+.pipeline-stage {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font: 500 11.5px/1 var(--font-sans, system-ui, sans-serif);
+  color: #98a1a6;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+
+.pipeline-stage:hover:not([data-active="true"]) {
+  color: #e8dfd1;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Amber underline: selected only */
+.pipeline-stage[data-active="true"] {
+  color: #f0ede6;
+  font-weight: 600;
+  border-bottom: 2px solid #b88644;
+}
+
+.pipeline-stage__badge {
+  font: 600 10px/1 var(--font-mono, monospace);
+  padding: 1.5px 4.5px;
+  border-radius: 2px;
+  background: #181b1e;
+  color: #8b949e;
+  border: 1px solid #282e34;
+}
+
+.pipeline-stage[data-active="true"] .pipeline-stage__badge {
+  background: #23282e;
+  color: #e8dfd1;
+  border-color: #384048;
+}
+

@@ -21,6 +21,7 @@ try:
         compute_full_thermodynamic_profile,
         predict_rna_secondary_structure,
         predict_homodimer_stability,
+        RNA_DNA_NN_PARAMS,
     )
     from backend.integrations import (
         lookup_ensembl_gene,
@@ -39,6 +40,7 @@ except ImportError:
         compute_full_thermodynamic_profile,
         predict_rna_secondary_structure,
         predict_homodimer_stability,
+        RNA_DNA_NN_PARAMS,
     )
     from integrations import (
         lookup_ensembl_gene,
@@ -84,8 +86,6 @@ class GenePreset(BaseModel):
     sasSnpId: str = "Unmapped"
     sasAlleleFreq: float = 0.05
     clinicalNote: str = ""
-    _source: str = "curated_preset"
-    isExploratoryPrototype: bool = False
 
     model_config = {"extra": "ignore"}
 
@@ -250,12 +250,11 @@ CODON_TABLE: dict[str, str] = {
     "AGT": "S", "AGC": "S", "AGA": "R", "AGG": "R", "GGT": "G", "GGC": "G", "GGA": "G", "GGG": "G",
 }
 
-# Sugimoto et al. (1995) RNA:DNA hybrid nearest-neighbor free energy parameters (dG_37 in kcal/mol)
+# Per-step dG_37 (kcal/mol) derived from the single Sugimoto (1995) table in thermodynamics.py, so this
+# module cannot drift from it. (This file used to carry its own hand-typed copy; four of its sixteen
+# values did not match the published column.)
 RNA_DNA_DG37: dict[str, float] = {
-    "AA": -1.0, "AT": -0.9, "AC": -2.1, "AG": -1.8,
-    "TA": -0.9, "TT": -0.2, "TC": -1.5, "TG": -1.6,
-    "CA": -1.7, "CT": -0.9, "CC": -2.1, "CG": -2.7,
-    "GA": -1.5, "GT": -1.1, "GC": -2.7, "GG": -2.9,
+    step: round(dh - 310.15 * ds / 1000.0, 2) for step, (dh, ds) in RNA_DNA_NN_PARAMS.items()
 }
 
 # Empirical positional activity weights used by the local guide-ranking model.
@@ -465,14 +464,14 @@ def health_check():
         "status": "online",
         "engine": "NanoCRISPR-3D Python FastAPI Bio-Engine",
         "modules": [
-            "Sugimoto (1995) RNA:DNA Nearest-Neighbor Thermodynamics (Genuine Published Matrix)",
-            "SantaLucia (1998) Unified Target DNA Duplex & Net R-Loop Driving Energy",
-            "Simplified Turner (2004) Nearest-Neighbor Dynamic Programming (20-nt Protospacer Hairpin Filter)",
-            "Spacer-Spacer Homodimerization & PAM-Proximal Seed Asymmetry Engine",
-            "ABE8e/BE4max Empirical Positional Activity Weights",
-            "Empirical Surrogate LNP Biophysics (Calibrated to Israelachvili CPP & De Gennes Brush Scaling)",
-            "Local South Asian MHC-I Anchor-Motif Proxy (Sidney / Sette Calibrated)",
-            "Authentic Grantham (1974) Amino Acid Difference Matrix & Ensembl-ClinVar Syndication",
+            "Sugimoto (1995) RNA:DNA nearest-neighbor sums (dH, dS, dG37, Tm); salt correction approximate",
+            "SantaLucia (1998) DNA:DNA nearest-neighbor sums; net R-loop dG is a difference of two duplex energies",
+            "Simplified Nussinov-style RNA folding with Turner-derived terms (not full Zuker/Turner MFE)",
+            "Spacer-spacer homodimer and seed/distal partition (nearest-neighbor sums on sub-sequences)",
+            "ABE8e/BE4max positional activity weights (hand-set, not fitted to data)",
+            "LNP biophysics: empirical surrogate formulas (Henderson-Hasselbalch ionization is exact; size, PDI, CPP, zeta, uptake are fitted-by-hand surrogates)",
+            "HLA class I anchor-motif heuristic for 5 alleles (not IEDB, not NetMHCpan)",
+            "Rule-based bystander impact with computed Grantham distance (not a ClinVar lookup)",
         ],
     }
 
@@ -679,8 +678,9 @@ def scan_guides(preset: GenePreset) -> list[GuideCandidate]:
 @app.post("/api/v1/crispr/thermodynamics", response_model=ThermodynamicProfile)
 def get_thermodynamics(req: ThermodynamicRequest) -> ThermodynamicProfile:
     """
-    Computes Sugimoto (1995) RNA:DNA heteroduplex, SantaLucia (1998) target DNA duplex unwinding,
-    net R-loop driving energy (dG_net), Turner (2004) hairpin MFE, and seed asymmetry.
+    Nearest-neighbor estimates for one spacer: Sugimoto (1995) RNA:DNA hybrid, SantaLucia (1998)
+    target DNA duplex, their difference (net R-loop dG), seed/distal asymmetry, and a simplified
+    hairpin fold. These are model estimates; see backend/thermodynamics.py for the limits.
     """
     return compute_full_thermodynamic_profile(req.spacer)
 
@@ -688,8 +688,9 @@ def get_thermodynamics(req: ThermodynamicRequest) -> ThermodynamicProfile:
 @app.post("/api/v1/crispr/secondary-structure", response_model=SecondaryStructureResult)
 def get_secondary_structure(req: SecondaryStructureRequest) -> SecondaryStructureResult:
     """
-    Computes Turner (2004) nearest-neighbor dynamic programming minimum free energy (MFE)
-    secondary structure prediction with dot-bracket notation and hairpin loop descriptors.
+    Simplified RNA folding (Nussinov-style dynamic program with Turner-derived stack and loop terms),
+    returned with dot-bracket notation. Not a full Zuker/Turner 2004 MFE: no multiloops, dangling
+    ends or terminal mismatches. Good for comparing spacers, not for quoting an energy.
     """
     return predict_rna_secondary_structure(req.sequence)
 
@@ -707,7 +708,6 @@ def simulate_lnp(form: LnpFormulation) -> LnpBiophysicsResult:
     raw_total = form.ionizableLipid + form.dspcHelper + form.cholesterol + form.pegLipid
     total = raw_total if raw_total > 0 else 100.0
 
-    norm_ion = (form.ionizableLipid / total) * 100.0
     norm_dspc = (form.dspcHelper / total) * 100.0
     norm_chol = (form.cholesterol / total) * 100.0
     norm_peg = max(0.1, (form.pegLipid / total) * 100.0)
@@ -746,12 +746,10 @@ def simulate_lnp(form: LnpFormulation) -> LnpBiophysicsResult:
     )
     cellular_uptake = round(min(98.0, max(8.0, peg_penalty)))
 
-    # 6. Israelachvili Critical Packing Parameter: CPP = v / (a_0(pH) * l_c)
-    # Branched ionizable tail volume v ~ 1.18 nm^3, l_c ~ 1.65 nm; ion-pairing shrinks a_0 at pH 5.5
-    cpp_ph55 = round(
-        1.08 + (endosomal_prot / 100.0) * 0.58 + (norm_ion - 50.0) * 0.002,
-        2,
-    )
+    # 6. Critical packing parameter, a linear surrogate: CPP = 1.08 + 0.58 * (protonated fraction).
+    # It is not computed from molecular geometry. The browser engine and the ionization graph use the
+    # same formula; a composition term used to be added here and made the two disagree.
+    cpp_ph55 = round(1.08 + (endosomal_prot / 100.0) * 0.58, 2)
 
     # 7. Endosomal Escape Efficiency
     pka_sweet_spot = max(0.0, 100.0 - abs(form.lipidPka - 6.35) * 55.0)
@@ -974,8 +972,9 @@ async def get_external_variant(rsid: str):
 @app.post("/api/v1/external/clinvar/annotate")
 def annotate_bystanders(req: BystanderAnnotationRequest):
     """
-    Annotates bystander missense mutations with clinical pathogenicity,
-    ClinVar risk classifications, and Grantham amino acid distance scores.
+    Rule-based impact label for bystander amino-acid changes. It does NOT query ClinVar. Each item
+    gets the consequence class, a computed Grantham distance (Grantham 1974) and, for the HBB
+    sickle-cell site only, a curated note. See backend/integrations/clinvar.py.
     """
     annotated = []
     for b in req.bystanders:
@@ -994,8 +993,8 @@ def annotate_bystanders(req: BystanderAnnotationRequest):
 @app.post("/api/v1/external/immunology/predict")
 def predict_protein_epitopes(req: EpitopeScanRequest):
     """
-    Scans a Cas protein or base editor sequence for South Asian HLA Class I
-    immunogenic epitope hotspots using canonical anchor pocket matrices.
+    Slides a 9-mer window along a protein and scores each window with an anchor-motif heuristic
+    for five HLA class I alleles. Not IEDB, not NetMHCpan: the score is a ranking aid only.
     """
     return scan_protein_for_epitopes(
         sequence=req.sequence,
@@ -1007,7 +1006,8 @@ def predict_protein_epitopes(req: EpitopeScanRequest):
 @app.post("/api/v1/external/immunology/score-peptide")
 def score_peptide_epitope(req: EpitopeScoreRequest):
     """
-    Computes MHC-I binding affinity and IC50 for an individual 9-mer peptide.
+    Anchor-motif heuristic score for one 9-mer and one HLA allele. The "IC50" is a rescaling of
+    that score, not a prediction. The result says which allele table was actually used.
     """
     return score_peptide_hla_binding(
         peptide=req.peptide,

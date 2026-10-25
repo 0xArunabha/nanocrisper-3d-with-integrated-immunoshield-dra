@@ -40,6 +40,7 @@ import type { InstitutionalProfile } from '../engines/institutionProfile';
 import type {
   GenePreset,
   GuideCandidate,
+  ThermodynamicProfile,
   LnpFormulation,
   LnpBiophysicsResult,
   BatchMassCalculation,
@@ -49,12 +50,16 @@ import {
   downloadIdtOrderSheet,
   downloadGenScriptOrderSheet,
 } from '../engines/crispr/orderSheetGenerator';
+import { describeBystanderImpact } from '../engines/crispr/bystanderImpact';
+import { calculateHlaRiskScore } from '../engines/immunology/hlaScanner';
 
 interface PreIndDossierModalProps {
   isOpen: boolean;
   onClose: () => void;
   preset: GenePreset;
   selectedGuide: GuideCandidate | undefined;
+  /** The Python engine's profile for the selected guide, when the backend answered. Preferred over the browser estimate. */
+  backendThermo?: ThermodynamicProfile | null;
   allGuides: GuideCandidate[];
   formulation: LnpFormulation;
   biophysics: LnpBiophysicsResult;
@@ -151,7 +156,7 @@ const GenomicSequenceDiagram: React.FC<{
 
       <div className="flex flex-wrap items-center justify-between text-[9px] text-slate-500 mt-2 px-1 gap-1">
         <span>* Pathogenic HbS point mutation: c.20A&gt;T (p.Glu6Val). Converted to benign HbG-Makassar (p.Glu6Ala) via Adenine Base Editing.</span>
-        <span className="text-emerald-700 font-bold">&bull; South Asian rs10768683 Check: Verified Non-Colliding (IndiGen / 1000G SAS)</span>
+        <span className="font-bold">&bull; SNP marker rs10768683 is a preset input; its frequency was not looked up</span>
       </div>
     </div>
   );
@@ -200,8 +205,8 @@ const ProtospacerCandidateTable: React.FC<{
                 <td className="p-1.5 font-bold">{g.CompositeScore} / 100</td>
                 <td className="p-1.5">{g.bystanders.length > 0 ? `${g.bystanders.length} bystander` : 'None'}</td>
                 <td className="p-1.5">
-                  <span className={`px-2 py-0.5 rounded-[2px] text-[9px] font-bold text-white shadow-xs ${
-                    isLead ? 'bg-[#047857]' : g.verdict === 'Optimal Clinical Guide' ? 'bg-[#059669]' : g.verdict === 'High Risk (Bystander/SNP)' ? 'bg-[#dc2626]' : 'bg-[#d97706]'
+                  <span className={`px-1.5 py-0.5 rounded-[2px] text-[8.5px] font-bold text-white ${
+                    isLead ? 'bg-[#047857]' : g.verdict === 'Optimal Clinical Guide' ? 'bg-[#0f766e]' : g.verdict === 'High Risk (Bystander/SNP)' ? 'bg-[#e11d48]' : 'bg-[#b45309]'
                   }`}>
                     {isLead ? 'Selected Clinical Lead' : g.verdict}
                   </span>
@@ -252,8 +257,8 @@ const LnpArchitectureDiagram: React.FC<{
           <line x1="156" y1="65" x2="105" y2="65" stroke="#64748b" strokeWidth="1" />
           <circle cx="156" cy="65" r="2" fill="#0f766e" />
           <text x="100" y="56" textAnchor="end" fontSize="8" fontWeight="bold" fill="#0f766e" fontFamily="sans-serif">PEG2000-DMG Corona</text>
-          <text x="100" y="66" textAnchor="end" fontSize="7.5" fill="#64748b" fontFamily="monospace">1.5 mol% • Mw: 2509.2</text>
-          <text x="100" y="76" textAnchor="end" fontSize="7.5" fill="#64748b" fontFamily="monospace">Rf/D: {biophysics.deGennesRfOverD ?? 0.52} (Mushroom)</text>
+          <text x="100" y="66" textAnchor="end" fontSize="7.5" fill="#64748b" fontFamily="monospace">{formulation.pegLipid} mol%</text>
+          <text x="100" y="76" textAnchor="end" fontSize="7.5" fill="#64748b" fontFamily="monospace">Rf/D: {biophysics.deGennesRfOverD === undefined ? 'n/a' : `${biophysics.deGennesRfOverD} (${biophysics.deGennesRfOverD >= 1.0 ? 'dense brush' : 'mushroom'})`}</text>
 
           {/* Top Callouts */}
           <line x1="210" y1="19" x2="210" y2="10" stroke="#64748b" strokeWidth="1" />
@@ -264,19 +269,19 @@ const LnpArchitectureDiagram: React.FC<{
           <circle cx="256" cy="65" r="2" fill="#334155" />
           <text x="315" y="40" fontSize="8" fontWeight="bold" fill="#0f172a" fontFamily="sans-serif">DSPC &amp; Cholesterol Bilayer</text>
           <text x="315" y="50" fontSize="7.5" fill="#64748b" fontFamily="monospace">DSPC: {formulation.dspcHelper} mol% • Chol: {formulation.cholesterol} mol%</text>
-          <text x="315" y="60" fontSize="7.5" fill="#64748b" fontFamily="monospace">SAXS Bragg d = {biophysics.saxsBraggSpacingNm ?? 6.21} nm</text>
+          <text x="315" y="60" fontSize="7.5" fill="#64748b" fontFamily="monospace">SAXS Bragg d = {biophysics.saxsBraggSpacingNm === undefined ? 'n/a' : `${biophysics.saxsBraggSpacingNm} nm`} (model)</text>
 
           <line x1="244" y1="78" x2="310" y2="95" stroke="#64748b" strokeWidth="1" />
           <circle cx="244" cy="78" r="2" fill="#047857" />
           <text x="315" y="90" fontSize="8" fontWeight="bold" fill="#047857" fontFamily="sans-serif">Ionizable Amino-Lipid Core</text>
-          <text x="315" y="100" fontSize="7.5" fill="#64748b" fontFamily="monospace">50.0 mol% • pKa = {formulation.lipidPka.toFixed(2)} • N/P = {formulation.npRatio.toFixed(1)}:1</text>
-          <text x="315" y="110" fontSize="7.5" fill="#64748b" fontFamily="monospace">Encapsulation Efficiency: 94.8%</text>
+          <text x="315" y="100" fontSize="7.5" fill="#64748b" fontFamily="monospace">{formulation.ionizableLipid} mol% • pKa = {formulation.lipidPka.toFixed(2)} • N/P = {formulation.npRatio.toFixed(1)}:1</text>
+          <text x="315" y="110" fontSize="7.5" fill="#64748b" fontFamily="monospace">Encapsulation: not measured</text>
         </svg>
       </div>
 
       <div className="flex flex-wrap items-center justify-between text-[9px] text-slate-500 mt-2 px-1 gap-1">
-        <span>Formulation: Ionizable Lipid / DSPC / Cholesterol / DMG-PEG2000 (50.0 : 10.0 : 38.5 : 1.5 mol%)</span>
-        <span className="text-[#0f766e] font-bold">Validated Microfluidic Formulation • Staggered Herringbone Mixing (TFR 12 mL/min, FRR 3:1)</span>
+        <span>Formulation: Ionizable Lipid / DSPC / Cholesterol / PEG-lipid ({formulation.ionizableLipid} : {formulation.dspcHelper} : {formulation.cholesterol} : {formulation.pegLipid} mol%)</span>
+        <span className="text-[#0f766e] font-bold">Planned process (template values) • Staggered herringbone mixing, TFR 12 mL/min, FRR 3:1</span>
       </div>
     </div>
   );
@@ -403,6 +408,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
   onClose,
   preset,
   selectedGuide,
+  backendThermo,
   allGuides,
   formulation,
   biophysics,
@@ -448,7 +454,12 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
 
   const dossierPrefix = profile?.dossierPrefix?.trim() || 'MAKAUT/DRA/IND-2026';
   const dossierId = `${dossierPrefix}/${preset.symbol.split(' ')[0].toUpperCase()}-01`;
-  const thermo = selectedGuide?.thermoProfile;
+  // The Python engine's profile when it answered; otherwise the browser estimate, which computes the
+  // nearest-neighbor energies but not the hairpin or homodimer (those cells say "needs backend").
+  const thermo = backendThermo ?? selectedGuide?.thermoProfile;
+  const thermoFromBrowser = thermo?.source === 'browser';
+  const preShieldHlaRisk =
+    patientRelevantEpitopes.length > 0 ? calculateHlaRiskScore(patientRelevantEpitopes, {}) : null;
 
   const handlePrint = () => {
     window.print();
@@ -778,7 +789,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                 Regulatory Executive Summary &amp; Cross-Domain CMC Matrix
               </h3>
               <p>
-                This dossier establishes the CMC control strategy, release specifications, and nonclinical biophysical rationale for an in vivo lipid nanoparticle (LNP)-encapsulated base editor drug product targeting <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.name} ({preset.symbol})</strong>. The molecular mechanism utilizes <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.editorType}</strong> to execute precision base transitions without generating double-strand DNA breaks (DSBs). The delivery system employs an ionizable lipid formulation modeled via an empirical surrogate biophysical framework with an Israelachvili Critical Packing Parameter (<strong className="font-mono-dossier">CPP &ge; 1.45</strong>) triggering endosomal membrane destabilization, paired with an ImmunoShield-DRA Cas9 core de-immunized against high-frequency South Asian HLA Class I/II alleles.
+                This dossier establishes the CMC control strategy, release specifications, and nonclinical biophysical rationale for an in vivo lipid nanoparticle (LNP)-encapsulated base editor drug product targeting <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.name} ({preset.symbol})</strong>. The molecular mechanism utilizes <strong className={isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}>{preset.editorType}</strong> to execute precision base transitions without generating double-strand DNA breaks (DSBs). The delivery system employs an ionizable lipid formulation engineered with an Israelachvili Critical Packing Parameter (<strong className="font-mono-dossier">CPP &ge; 1.45</strong>) triggering endosomal membrane destabilization, paired with an ImmunoShield-DRA Cas9 core de-immunized against high-frequency South Asian HLA Class I/II alleles.
               </p>
               <div className={`mt-2 text-[10px] font-mono-dossier ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
                 Clinical Note: {preset.clinicalNote}
@@ -862,9 +873,9 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                     <div className={`text-[10px] ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
                       South Asian Genomic Polymorphism Audit:{' '}
                       {selectedGuide.hasSasSnpCollision ? (
-                        <span className="text-rose-700 font-bold">Collision flagged with {preset.sasSnpId} (IndiGen/1000G SAS)</span>
+                        <span className="text-rose-700 font-bold">Overlaps the SNP marker {preset.sasSnpId}</span>
                       ) : (
-                        <span className="text-emerald-700 font-bold">Clear of common SAS polymorphisms ({preset.sasSnpId}, SAS MAF: {(preset.sasAlleleFreq * 100).toFixed(1)}%)</span>
+                        <span className="text-emerald-700 font-bold">No overlap with the one SNP marker checked ({preset.sasSnpId}; frequency {(preset.sasAlleleFreq * 100).toFixed(1)}% as entered or looked up, not verified here). Other SAS variants were not checked.</span>
                       )}
                     </div>
                   </div>
@@ -890,7 +901,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                           <th className="p-1.5">Original Codon</th>
                           <th className="p-1.5">Edited Codon</th>
                           <th className="p-1.5">Classification</th>
-                          <th className="p-1.5">ClinVar Pathogenicity Audit</th>
+                          <th className="p-1.5">Impact (rule + Grantham; not ClinVar)</th>
                         </tr>
                       </thead>
                       <tbody className={`${isPaper ? 'divide-y divide-slate-200' : 'divide-y divide-[#2e2923]'} print:divide-gray-300`}>
@@ -914,14 +925,19 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                               </span>
                             </td>
                             <td className="p-1.5">
-                              <span className={`font-semibold ${isPaper ? 'text-slate-800' : 'text-[#e8dfd1]'} print:text-black`}>
-                                {b.clinvarTag || (b.classification === 'Target Edit' ? 'Benign / Intended Goal' : b.classification === 'Silent (Synonymous)' ? 'Likely Benign (Synonymous)' : 'VUS (Uncertain Significance)')}
-                              </span>
-                              {b.biochemicalImpact && (
-                                <span className="block text-[8.5px] text-slate-500 print:text-gray-600">
-                                  {b.biochemicalImpact}
-                                </span>
-                              )}
+                              {(() => {
+                                const impact = describeBystanderImpact(preset.id, b);
+                                return (
+                                  <>
+                                    <span className={`font-semibold ${isPaper ? 'text-slate-800' : 'text-[#e8dfd1]'} print:text-black`}>
+                                      {impact.tag}
+                                    </span>
+                                    <span className="block text-[8.5px] text-slate-500 print:text-gray-600">
+                                      {impact.detail}
+                                    </span>
+                                  </>
+                                );
+                              })()}
                             </td>
                           </tr>
                         ))}
@@ -989,8 +1005,8 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                     Integrated Synthesis Portal Portability:
                   </span>
                   <div className="flex gap-2">
-                    <span className="px-2 py-0.5 rounded-[2px] bg-emerald-700 text-white font-bold text-[9px]">IDT Format Compliant</span>
-                    <span className="px-2 py-0.5 rounded-[2px] bg-amber-700 text-white font-bold text-[9px]">GenScript Bulk CSV Ready</span>
+                    <span className="px-2 py-0.5 rounded-[2px] bg-emerald-700 text-white font-bold text-[9px]">IDT order format</span>
+                    <span className="px-2 py-0.5 rounded-[2px] bg-amber-700 text-white font-bold text-[9px]">GenScript bulk CSV format</span>
                   </div>
                 </div>
               </section>
@@ -1002,27 +1018,28 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                     <span className="text-[#0f766e] font-bold">3.2.S.3</span> Multi-State R-Loop Thermodynamics &amp; Biophysical Rigor
                   </h3>
                   <p className={`text-[10.5px] leading-relaxed ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
-                    Thermodynamic partitioning across the 20-nt protospacer is evaluated across three physical regimes implemented in <code className="font-mono-dossier">backend/thermodynamics.py</code>:
-                    (1) <em>Sugimoto (1995) RNA:DNA heteroduplex hybridization</em>,
-                    (2) <em>SantaLucia (1998) non-target strand DNA:DNA displacement</em> with monovalent salt corrections, and
-                    (3) <em>Turner (2004) dynamic programming RNA secondary structure MFE</em>.
+                    The 20-nt protospacer is evaluated with nearest-neighbor sums implemented in <code className="font-mono-dossier">backend/thermodynamics.py</code> (and mirrored in the browser for the energies below):
+                    (1) <em>Sugimoto (1995) RNA:DNA hybrid parameters</em>,
+                    (2) <em>SantaLucia (1998) DNA:DNA duplex parameters</em>, both with an approximate monovalent-salt correction, and
+                    (3) a <em>simplified RNA folding routine</em> with Turner-derived terms (backend only; it is not a full Zuker/Turner MFE and has no multiloop or dangling-end terms).
+                    These are model estimates, not measurements. {thermoFromBrowser ? 'The Python backend was not reachable, so the hairpin and homodimer values below are not computed.' : 'Computed by the Python backend.'}
                   </p>
 
                   {/* Thermodynamic Equations Block */}
                   <div className={`p-3 rounded border font-mono-dossier text-[10px] space-y-2 ${isPaper ? 'bg-slate-50 border-slate-200' : 'bg-[#141210] border-[#24201b]'}`}>
                     <div className="font-bold text-[10.5px] text-[#0f766e]">
-                      Composite R-Loop Driving Free Energy &amp; Melting Temperature Governing Equations:
+                      Equations as implemented:
                     </div>
                     <div className={`cmc-equation-card p-3 rounded border text-center font-bold text-xs ${isPaper ? 'bg-white border-slate-300 text-slate-900' : 'bg-[#12110f] border-[#2e2923] text-[#e8dfd1]'}`}>
                       <div className="cmc-equation-line mb-1.5">
-                        &Delta;G&deg;<sub className="cmc-sub">R-loop</sub>(T) = &Delta;G&deg;<sub className="cmc-sub">RNA:DNA</sub>(T) &minus; &Delta;G&deg;<sub className="cmc-sub">DNA:DNA</sub>(T) + &Delta;G&deg;<sub className="cmc-sub">PAM-open</sub> + |&Delta;G&deg;<sub className="cmc-sub">MFE, unfold</sub>(T)|
+                        &Delta;G&deg;<sub className="cmc-sub">net</sub> = &Delta;G&deg;<sub className="cmc-sub">RNA:DNA hybrid</sub> &minus; &Delta;G&deg;<sub className="cmc-sub">DNA:DNA duplex</sub>
                       </div>
                       <div className="cmc-equation-line">
-                        T<sub className="cmc-sub">m</sub> = [(&Delta;H&deg; &times; 1000) / (&Delta;S&deg; + R &middot; ln(C<sub className="cmc-sub">T</sub> / 4))] + 16.6 &middot; log<sub className="cmc-sub">10</sub>[Na<sup className="cmc-sup">+</sup>]<sub className="cmc-sub">eq</sub> &minus; 273.15
+                        T<sub className="cmc-sub">m</sub> = (&Delta;H&deg; &times; 1000) / (&Delta;S&deg;<sub className="cmc-sub">salt</sub> + R &middot; ln(C<sub className="cmc-sub">T</sub> / 4)) &minus; 273.15
                       </div>
                     </div>
                     <div className={`text-[9px] ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>
-                      Where R = 1.9872 cal/(mol&middot;K), C<sub>T</sub> = 250 nM, [Na<sup>+</sup>]<sub>eq</sub> = 150 mM physiological ionic strength, and &Delta;G&deg;<sub>PAM-open</sub> accounts for local Cas9 domain uncoupling.
+                      Where R = 1.9872 cal/(mol&middot;K), C<sub>T</sub> = 250 nM, &Delta;S&deg;<sub>salt</sub> = &Delta;S&deg; + 0.368 &middot; (N &minus; 1) &middot; ln[Na<sup>+</sup>] with [Na<sup>+</sup>] = 150 mM. The net energy compares two nucleic-acid duplexes only. PAM opening, Cas9 protein binding and DNA supercoiling are not modelled, so a positive value does not mean the guide fails.
                     </div>
                   </div>
 
@@ -1040,30 +1057,30 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                     <div className={`biophysical-card p-2.5 rounded border ${isPaper ? 'bg-slate-50 border-slate-200' : 'bg-[#141210] border-[#24201b]'}`}>
                       <div className={`dossier-metric-label text-[8.5px] uppercase tracking-wider ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Net R-Loop &Delta;G</div>
                       <div className={`dossier-metric-value font-bold text-sm print:text-black ${isPaper ? 'text-emerald-700' : 'text-[#5e946c]'}`}>{thermo.rLoopNetDg.toFixed(2)} kcal/mol</div>
-                      <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>{thermo.isRLoopThermodynamicallyFavored ? 'Spontaneous Invasion' : 'Unfavored'}</div>
+                      <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>{thermo.isRLoopThermodynamicallyFavored ? 'Negative: duplex terms alone favor it' : 'Positive: Cas9 supplies the rest'}</div>
                     </div>
                     <div className={`biophysical-card p-2.5 rounded border ${isPaper ? 'bg-slate-50 border-slate-200' : 'bg-[#141210] border-[#24201b]'}`}>
-                      <div className={`dossier-metric-label text-[8.5px] uppercase tracking-wider ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Turner Hairpin MFE</div>
-                      <div className={`dossier-metric-value font-bold text-sm print:text-black ${isPaper ? 'text-amber-700' : 'text-[#cfa052]'}`}>{thermo.hairpinDg.toFixed(1)} kcal/mol</div>
-                      <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>{thermo.hairpinRisk}</div>
+                      <div className={`dossier-metric-label text-[8.5px] uppercase tracking-wider ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Hairpin fold energy (simplified)</div>
+                      <div className={`dossier-metric-value font-bold text-sm print:text-black ${isPaper ? 'text-amber-700' : 'text-[#cfa052]'}`}>{thermoFromBrowser ? 'needs backend' : `${thermo.hairpinDg.toFixed(1)} kcal/mol`}</div>
+                      <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>{thermoFromBrowser ? 'not computed offline' : thermo.hairpinRisk}</div>
                     </div>
                   </div>
 
                   <div className={`p-3 rounded border font-mono-dossier text-[10px] space-y-1.5 ${isPaper ? 'bg-slate-50 border-slate-200' : 'bg-[#141210] border-[#24201b]'}`}>
                     <div className={`flex items-center justify-between ${isPaper ? 'text-slate-700' : 'text-[#a69b8d]'}`}>
-                      <span className="font-bold">Turner (2004) Dynamic Programming Secondary Structure Model:</span>
-                      <span>Stem: {thermo.hairpinStemLength} bp &bull; Loop: {thermo.hairpinLoopSize} nt</span>
+                      <span className="font-bold">Simplified RNA folding (Turner-derived terms):</span>
+                      <span>{thermoFromBrowser ? 'needs backend' : `Stem: ${thermo.hairpinStemLength} bp \u2022 Loop: ${thermo.hairpinLoopSize} nt`}</span>
                     </div>
                     <div className={`p-2 rounded print:bg-white border space-y-1 ${isPaper ? 'bg-white border-slate-300' : 'bg-[#141210] border-[#2e2923]'}`}>
                       <div className={`font-bold tracking-widest text-[11px] ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>
                         RNA 5&apos;: {thermo.spacer} -3&apos;
                       </div>
                       <div className="text-[#0f766e] font-bold tracking-widest text-[11px]">
-                        Fold:   {thermo.hairpinStructure}
+                        Fold:   {thermoFromBrowser ? '(not computed; start the Python backend)' : thermo.hairpinStructure}
                       </div>
                     </div>
                     <div className={`text-[9.5px] pt-0.5 ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
-                      PAM Seed Stability: {thermo.seedDg.toFixed(1)} kcal/mol &bull; Distal Stability: {thermo.distalDg.toFixed(1)} kcal/mol &bull; Asymmetry (&Delta;&Delta;G): {thermo.seedAsymmetryDdg.toFixed(1)} kcal/mol &bull; Homodimerization Risk: {thermo.selfDimerRisk} ({thermo.selfDimerDg.toFixed(1)} kcal/mol)
+                      PAM Seed Stability: {thermo.seedDg.toFixed(1)} kcal/mol &bull; Distal Stability: {thermo.distalDg.toFixed(1)} kcal/mol &bull; Asymmetry (&Delta;&Delta;G): {thermo.seedAsymmetryDdg.toFixed(1)} kcal/mol &bull; Homodimerization: {thermoFromBrowser ? 'needs backend' : `${thermo.selfDimerRisk} (${thermo.selfDimerDg.toFixed(1)} kcal/mol)`}
                     </div>
                   </div>
                 </section>
@@ -1078,13 +1095,14 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   <div className={`font-semibold text-xs print:text-black ${isPaper ? 'text-slate-800' : 'text-[#e8dfd1]'}`}>
                     Table 3.2.S.4 — Drug Substance (Engineered Cas9/RNP &amp; Modified sgRNA) Release Specifications
                   </div>
+                  <p className={`text-[9.5px] leading-snug ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Template specification. No lot has been made or tested, so every test result below is &quot;Not measured&quot;; the acceptance criteria are example targets to be set with the process owner.</p>
                   <table className="cmc-data-table w-full text-left font-mono-dossier text-[9.5px]">
                     <thead>
                       <tr className={`print:bg-gray-100 print:text-black border-b ${isPaper ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-[#1e1c18] text-[#a69b8d] border-[#2e2923]'}`}>
                         <th className="p-1.5">Test Attribute</th>
                         <th className="p-1.5">Analytical Method</th>
                         <th className="p-1.5">Regulatory Acceptance Criteria</th>
-                        <th className="p-1.5">Observed Benchmark</th>
+                        <th className="p-1.5">Result</th>
                         <th className="p-1.5">Standard Reference</th>
                       </tr>
                     </thead>
@@ -1093,49 +1111,49 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Identity (sgRNA)</td>
                         <td className="p-1.5">LC-MS ESI Intact Mass / Sanger</td>
                         <td className="p-1.5">Molecular weight conforms within &plusmn; 1.5 Da; &ge;99.5% sequence match</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">Conforms (&plusmn;0.4 Da)</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">ICH Q6B</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Identity (Cas9 Protein)</td>
                         <td className="p-1.5">MALDI-TOF / Intact Protein LC-MS</td>
                         <td className="p-1.5">Expected mass conforms within &plusmn; 5 Da; sequence confirmed</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">Conforms (&plusmn;2.1 Da)</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">ICH Q6B</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Purity (sgRNA)</td>
                         <td className="p-1.5">IP-RP-HPLC / CGE</td>
                         <td className="p-1.5">&ge; 92.0% main full-length peak area</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">96.4% Main Peak</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">Ph. Eur. 2.2.29</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Purity (Cas9 Protein)</td>
                         <td className="p-1.5">SDS-PAGE / Capillary Gel Electrophoresis</td>
                         <td className="p-1.5">&ge; 95.0% monomeric purity</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">98.2% Monomer</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;1056&gt;</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Bacterial Endotoxins</td>
                         <td className="p-1.5">Kinetic Turbidimetric / Chromogenic LAL</td>
                         <td className="p-1.5">&lt; 2.5 EU / mg drug substance</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">&lt; 0.45 EU / mg</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;85&gt;</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Residual Host Cell DNA</td>
                         <td className="p-1.5">Quantitative Real-Time qPCR</td>
                         <td className="p-1.5">&le; 10 pg / therapeutic dose</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">&lt; 3.2 pg / dose</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">WHO TRS 941</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Residual Host Cell Protein</td>
                         <td className="p-1.5">E. coli HCP ELISA</td>
                         <td className="p-1.5">&le; 10 ng / mg protein (&le; 10 ppm)</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">2.8 ppm</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;1132&gt;</td>
                       </tr>
                     </tbody>
@@ -1153,7 +1171,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   FDA eCTD Module 3.2.P
                 </span>
                 <h2 className={`font-serif-dossier text-base sm:text-lg font-bold ${isPaper ? 'text-[#0f172a]' : 'text-[#e8dfd1]'} print:text-black`}>
-                  DRUG PRODUCT: Encapsulated LNP Suspension for HBB Correction
+                  DRUG PRODUCT: Encapsulated LNP Suspension for {preset.id} Editing
                 </h2>
               </div>
 
@@ -1186,12 +1204,12 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                     <div className={`font-bold print:text-black ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>
                       {biophysics.diameterNm} nm &bull; PDI {biophysics.pdi.toFixed(2)}
                     </div>
-                    <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>DLS Monodisperse Peak</div>
+                    <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Model estimate, not a DLS result</div>
                   </div>
                   <div className={`biophysical-card p-2.5 rounded border ${isPaper ? 'bg-slate-50 border-slate-200' : 'bg-[#141210] border-[#24201b]'}`}>
                     <div className={`dossier-metric-label text-[8.5px] uppercase tracking-wider ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Zeta Potential (pH 7.4)</div>
                     <div className={`font-bold print:text-black ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>{biophysics.zetaPotentialMv} mV</div>
-                    <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Near-neutral physiological</div>
+                    <div className={`dossier-metric-sublabel text-[8.5px] tracking-wide ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Model estimate, not measured</div>
                   </div>
                 </div>
 
@@ -1205,7 +1223,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   <span className="text-[#0f766e] font-bold">3.2.P.2</span> Pharmaceutical Development &amp; Biophysical Chemistry (CPP &amp; Polymer Brush)
                 </h3>
                 <p className={`text-[10.5px] leading-relaxed ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
-                  LNP self-assembly and endosomal escape kinetics are evaluated via an <strong>empirical surrogate biophysical model</strong> calibrated to benchmark microfluidic formulations. Protonation drives the Israelachvili Critical Packing Parameter (<code className="font-mono-dossier">CPP = v / (a0 &middot; lc)</code>) and De Gennes polymer brush scaling (<code className="font-mono-dossier">Rf / D</code>). At physiological pH 7.4, LNPs maintain a neutral stealth lamellar envelope (<code className="font-mono-dossier">CPP &approx; 0.95</code>) to minimize systemic toxicity. Upon endosomal acidification (pH 5.5), tertiary amine protonation drives cone-shaped lipid packing (<code className="font-mono-dossier">CPP &ge; 1.45</code>), triggering the non-bilayer inverted hexagonal (H<sub>II</sub>) phase transition that disrupts endosomal membranes.
+                  LNP self-assembly and endosomal escape kinetics are dictated by the Israelachvili Critical Packing Parameter (<code className="font-mono-dossier">CPP = v / (a0 &middot; lc)</code>) and De Gennes polymer brush scaling (<code className="font-mono-dossier">Rf / D</code>). At physiological pH 7.4, LNPs maintain a neutral stealth lamellar envelope (<code className="font-mono-dossier">CPP &approx; 0.95</code>) to minimize systemic toxicity. Upon endosomal acidification (pH 5.5), tertiary amine protonation drives cone-shaped lipid packing (<code className="font-mono-dossier">CPP &ge; 1.45</code>), triggering the non-bilayer inverted hexagonal (H<sub>II</sub>) phase transition that disrupts endosomal membranes.
                 </p>
 
                 <div
@@ -1216,20 +1234,26 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   <div className="biophysical-card p-2 rounded border border-slate-200/50">
                     <span className={`block text-[9px] uppercase ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Israelachvili CPP (pH 5.5)</span>
                     <strong className={`text-xs print:text-black ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>
-                      {biophysics.criticalPackingParam ?? 1.48} ({biophysics.criticalPackingParam && biophysics.criticalPackingParam >= 1.45 ? 'Hexagonal H_II Transition' : 'Lamellar'})
+                      {biophysics.criticalPackingParam === undefined ? 'not computed' : `${biophysics.criticalPackingParam} (${biophysics.criticalPackingParam >= 1.45 ? 'Hexagonal H_II Transition' : 'Lamellar'})`}
                     </strong>
                   </div>
                   <div className="biophysical-card p-2 rounded border border-slate-200/50">
                     <span className={`block text-[9px] uppercase ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>De Gennes Polymer Brush (Rf/D)</span>
                     <strong className={`text-xs print:text-black ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>
-                      {biophysics.deGennesRfOverD ?? 1.25} ({biophysics.deGennesRfOverD && biophysics.deGennesRfOverD >= 1.0 ? 'Dense Brush Shield' : 'Mushroom'})
+                      {biophysics.deGennesRfOverD === undefined ? 'not computed' : `${biophysics.deGennesRfOverD} (${biophysics.deGennesRfOverD >= 1.0 ? 'Dense Brush Shield' : 'Mushroom'})`}
                     </strong>
                   </div>
                   <div className="biophysical-card p-2 rounded border border-slate-200/50">
                     <span className={`block text-[9px] uppercase ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>SAXS Bragg Spacing (dSAXS)</span>
-                    <strong className={`text-xs print:text-black ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>{biophysics.saxsBraggSpacingNm ?? 6.2} nm</strong>
+                    <strong className={`text-xs print:text-black ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>{biophysics.saxsBraggSpacingNm === undefined ? 'not computed' : `${biophysics.saxsBraggSpacingNm} nm`}</strong>
                   </div>
                 </div>
+
+                <p className={`text-[9.5px] leading-snug ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>
+                  Basis: ionization at a given pH is the Henderson-Hasselbalch value. Hydrodynamic size, PDI, zeta potential,
+                  packing parameter, uptake, escape and organ split are empirical surrogates tuned by hand in this app, not
+                  measurements. They rank formulations against each other; they do not replace DLS, ELS or in vivo data.
+                </p>
 
                 {/* Figure 3.2.P.2 & 3.2.P.3: Ionization Curve & Biodistribution Bar */}
                 <HendersonHasselbalchDiagram formulation={formulation} biophysics={biophysics} isPaper={isPaper} />
@@ -1290,13 +1314,14 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   <div className={`font-semibold text-xs print:text-black ${isPaper ? 'text-slate-800' : 'text-[#e8dfd1]'}`}>
                     Table 3.2.P.4 — Finished Drug Product (Encapsulated LNP Suspension) Analytical Release Specifications
                   </div>
+                  <p className={`text-[9.5px] leading-snug ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Template specification. No lot has been made or tested. Size, PDI and zeta are this app's model estimates compared with the example criteria; every other result is &quot;Not measured&quot;.</p>
                   <table className="cmc-data-table w-full text-left font-mono-dossier text-[9.5px]">
                     <thead>
                       <tr className={`print:bg-gray-100 print:text-black border-b ${isPaper ? 'bg-slate-100 text-slate-700 border-slate-300' : 'bg-[#1e1c18] text-[#a69b8d] border-[#2e2923]'}`}>
                         <th className="p-1.5">Test Parameter</th>
                         <th className="p-1.5">Analytical Method</th>
                         <th className="p-1.5">Quantitative Acceptance Criteria</th>
-                        <th className="p-1.5">Observed Lot Value</th>
+                        <th className="p-1.5">Result</th>
                         <th className="p-1.5">Pharmacopeial Monograph</th>
                       </tr>
                     </thead>
@@ -1305,63 +1330,63 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Appearance</td>
                         <td className="p-1.5">Visual Inspection (Ph. Eur. 2.9.20)</td>
                         <td className="p-1.5">Opalescent nanocolloidal suspension; free of visible particulates</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">Conforms (Opalescent)</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;790&gt;</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Encapsulation Efficiency</td>
                         <td className="p-1.5">RiboGreen Dye Exclusion Assay</td>
                         <td className="p-1.5">&ge; 90.0% encapsulated nucleic acid</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">94.8% Encapsulated</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">ICH Q6B</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Particle Size (Z-Average)</td>
                         <td className="p-1.5">Dynamic Light Scattering (DLS)</td>
                         <td className="p-1.5">70.0 nm &ndash; 90.0 nm hydrodynamic diameter</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">{biophysics.diameterNm} nm</td>
+                        <td className="p-1.5 font-bold">Model: {biophysics.diameterNm} nm ({biophysics.diameterNm >= 70 && biophysics.diameterNm <= 90 ? 'inside' : 'outside'} the range)</td>
                         <td className="p-1.5">ISO 22412 / USP &lt;429&gt;</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Polydispersity Index (PDI)</td>
                         <td className="p-1.5">DLS Cumulants Analysis</td>
                         <td className="p-1.5">&le; 0.12 (Highly monodisperse)</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">{biophysics.pdi.toFixed(2)}</td>
+                        <td className="p-1.5 font-bold">Model: {biophysics.pdi.toFixed(2)} ({biophysics.pdi <= 0.12 ? 'meets' : 'above'} the limit)</td>
                         <td className="p-1.5">ISO 22412</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Surface Charge (Zeta)</td>
                         <td className="p-1.5">Electrophoretic Light Scattering</td>
                         <td className="p-1.5">&minus;5.0 mV to +5.0 mV (Near neutral at pH 7.4)</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">{biophysics.zetaPotentialMv} mV</td>
+                        <td className="p-1.5 font-bold">Model: {biophysics.zetaPotentialMv} mV ({Math.abs(biophysics.zetaPotentialMv) <= 5 ? 'inside' : 'outside'} the range)</td>
                         <td className="p-1.5">USP &lt;432&gt;</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Subvisible Particulates</td>
                         <td className="p-1.5">Light Obscuration Particle Count</td>
                         <td className="p-1.5">&ge;10 &mu;m: &le; 6000/container; &ge;25 &mu;m: &le; 600/container</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">&ge;10&mu;m: 42; &ge;25&mu;m: 3</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;788&gt; (Method 1)</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Residual Solvents (Ethanol)</td>
                         <td className="p-1.5">Headspace GC-FID</td>
                         <td className="p-1.5">&le; 500 ppm (Class 3 limit)</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">115 ppm</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;467&gt; / ICH Q3C</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Sterility</td>
                         <td className="p-1.5">Direct Inoculation (14-day incubation)</td>
                         <td className="p-1.5">No evidence of microbial growth</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">Conforms (Sterile)</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;71&gt;</td>
                       </tr>
                       <tr>
                         <td className={`p-1.5 font-bold ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>Bacterial Endotoxins</td>
                         <td className="p-1.5">Kinetic Chromogenic LAL</td>
                         <td className="p-1.5">&lt; 2.5 EU / mL finished product</td>
-                        <td className="p-1.5 text-emerald-700 font-bold">&lt; 0.20 EU / mL</td>
+                        <td className="p-1.5 italic opacity-70">Not measured</td>
                         <td className="p-1.5">USP &lt;85&gt;</td>
                       </tr>
                     </tbody>
@@ -1375,7 +1400,10 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   <span className="text-[#0f766e] font-bold">3.2.P.5</span> ImmunoShield-DRA South Asian HLA De-Immunization &amp; Structural Preservation Audit
                 </h3>
                 <p className={`text-[10.5px] leading-relaxed ${isPaper ? 'text-slate-600' : 'text-[#a69b8d]'}`}>
-                  Recombinant SpCas9 possesses multiple immunogenic nonamer peptide epitopes recognized by human cytotoxic T-lymphocytes (CTLs). ImmunoShield-DRA executes structure-guided stealth substitutions across high-frequency South Asian HLA Class I/II alleles. Each engineered mutation was evaluated for thermodynamic folding stability preservation (&Delta;&Delta;G<sub>fold</sub> &le; +0.5 kcal/mol) to verify absence of protein misfolding.
+                  Recombinant SpCas9 possesses multiple immunogenic nonamer peptide epitopes recognized by human cytotoxic T-lymphocytes (CTLs). ImmunoShield-DRA proposes stealth substitutions for a small panel of five South Asian HLA Class I alleles.
+                </p>
+                <p className={`text-[10px] leading-relaxed p-2 rounded border ${isPaper ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-[#1b1710] border-[#4a3a1f] text-[#c98a3b]'}`}>
+                  <strong>Illustrative panel, not validated.</strong> The peptides, binding scores, rank percentages, substitutions and &Delta;&Delta;G<sub>fold</sub> values in this table are curated model inputs. They were not produced by an MHC-binding predictor (such as NetMHCpan or IEDB) or by a protein-stability calculation, and no substitution has been tested for folding or activity. Use them to illustrate the workflow, not as evidence of immune evasion.
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono-dossier text-[10px]">
@@ -1388,9 +1416,9 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   <div className={`p-2.5 rounded ${isPaper ? 'bg-slate-50 border border-slate-200' : 'bg-[#141210] border border-[#24201b]'}`}>
                     <span className={`text-[9px] uppercase block ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Residual Immunogenicity Risk</span>
                     <strong className="text-sm font-bold text-emerald-700">
-                      {residualHlaRisk !== null ? `${residualHlaRisk} / 100` : '<15 / 100 (Shielded)'}
+                      {residualHlaRisk !== null ? `${residualHlaRisk} / 100` : 'not assessed (no HLA alleles selected)'}
                     </strong>
-                    <div className="text-[8.5px] text-slate-500 mt-0.5">Pre-shield risk: 88/100</div>
+                    <div className="text-[8.5px] text-slate-500 mt-0.5">Pre-shield: {preShieldHlaRisk !== null ? `${preShieldHlaRisk} / 100` : 'not assessed'} (demo score, not a prediction)</div>
                   </div>
                 </div>
 
@@ -1457,7 +1485,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                 </div>
 
                 <div className={`p-3 rounded text-[10px] leading-relaxed font-sans-dossier ${isPaper ? 'bg-slate-50 border border-slate-200 text-slate-600' : 'bg-[#141210] border border-[#24201b] text-[#a69b8d]'}`}>
-                  <strong>Regulatory Compliance Attestation:</strong> {profile?.complianceAttestation || 'This document reflects algorithmic pre-IND evaluation conducted under the NanoCRISPR-3D & ImmunoShield-DRA computational platform developed at MAKAUT. Biophysical calibrations employ peer-reviewed nearest-neighbor heteroduplex parameters (Sugimoto 1995, SantaLucia 1998) and an empirical surrogate biophysical model for LNP self-assembly and phase transitions (calibrated to Israelachvili 2011 and De Gennes 1979 scaling regimes). In vitro characterization (cryo-EM, DLS, Sanger/NGS sequencing) is required prior to Phase 1 clinical filing.'}
+                  <strong>Regulatory Compliance Attestation:</strong> {profile?.complianceAttestation || 'This document reflects algorithmic pre-IND evaluation conducted under the NanoCRISPR-3D & ImmunoShield-DRA computational platform developed at MAKAUT. Biophysical calibrations adhere to peer-reviewed nearest-neighbor kinetics (Sugimoto 1995, SantaLucia 1998, Turner 2004) and self-assembly phase transition principles (Israelachvili 2011, De Gennes 1979). In vitro characterization (cryo-EM, DLS, Sanger/NGS sequencing) is required prior to Phase 1 clinical filing.'}
                 </div>
 
                 <div className="grid grid-cols-2 gap-6 pt-3 font-mono-dossier text-[10px]">
@@ -1475,15 +1503,12 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                   </div>
 
                   <div className={`pt-2 text-right space-y-1 ${isPaper ? 'border-t border-slate-400' : 'border-t border-[#3a342c]'}`}>
-                    <div className={`uppercase text-[8.5px] ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Verification Timestamp &amp; Seal</div>
+                    <div className={`uppercase text-[8.5px] ${isPaper ? 'text-slate-500' : 'text-[#70675c]'}`}>Generated at</div>
                     <div className={`font-bold text-[10px] ${isPaper ? 'text-slate-900' : 'text-[#e8dfd1]'}`}>
                       {new Date().toISOString()}
                     </div>
-                    <div className="inline-block px-2 py-0.5 rounded-[2px] bg-[#047857] text-white font-bold text-[9px] uppercase tracking-wider shadow-xs">
-                      &bull; VERIFIED NONCLINICAL PRE-IND SPEC &bull;
-                    </div>
-                    <div className={`text-[8.5px] truncate select-all ${isPaper ? 'text-slate-400' : 'text-[#70675c]'}`}>
-                      SHA256: d5a4e8b12f7c9e0132a87bf36c9210e4a9e5b2f87c104d98a127f8a92b3c
+                    <div className="inline-block px-2 py-0.5 rounded-[2px] bg-[#b45309] text-white font-bold text-[9px] uppercase tracking-wider shadow-xs">
+                      &bull; DRAFT &bull; MODEL OUTPUT &bull; NOT A SUBMISSION &bull;
                     </div>
                   </div>
                 </div>
@@ -1506,7 +1531,7 @@ export const PreIndDossierModal: React.FC<PreIndDossierModalProps> = ({
                 </div>
                 <ol className={`list-decimal list-inside space-y-2 text-[10px] leading-relaxed font-sans-dossier ${isPaper ? 'text-slate-700' : 'text-[#a69b8d]'}`}>
                   <li>
-                    Sugimoto, N., Nakano, S., Yoneyama, M. &amp; Honda, K. (1996). Improved thermodynamic parameters and helix initiation factor to predict stability of DNA duplexes. <em className="font-serif-dossier">Nucleic Acids Research</em>, 24(22), 4501–4505. doi:10.1093/nar/24.22.4501
+                    Sugimoto, N., Nakano, S., Katoh, M., Matsumura, A., Nakamuta, H., Ohmichi, T., Yoneyama, M. &amp; Sasaki, M. (1995). Thermodynamic parameters to predict stability of RNA/DNA hybrid duplexes. <em className="font-serif-dossier">Biochemistry</em>, 34(35), 11211–11216.
                   </li>
                   <li>
                     SantaLucia, J. Jr. (1998). A unified view of polymer, dumbbell, and oligonucleotide DNA nearest-neighbor thermodynamics. <em className="font-serif-dossier">Proceedings of the National Academy of Sciences</em>, 95(4), 1460–1465. doi:10.1073/pnas.95.4.1460

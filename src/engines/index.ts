@@ -9,6 +9,9 @@ export * from './service';
 export * from './crispr/guideScanner';
 export * from './crispr/oligoGenerator';
 export * from './crispr/orderSheetGenerator';
+export * from './crispr/grantham';
+export * from './crispr/bystanderImpact';
+export * from './crispr/targetCoverage';
 
 // Nanotechnology & CMC
 export * from './nanotech/lnpSimulator';
@@ -18,3 +21,9 @@ export * from './nanotech/batchCalculator';
 
 // ImmunoShield HLA Engineering
 export * from './immunology/hlaScanner';
+
+// Numbers for the clinical tour
+export * from './tourFacts';
+
+// Quiet Hint System
+export * from './hints';

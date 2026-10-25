@@ -86,8 +86,6 @@ export interface GenePreset {
   sasSnpId: string;
   sasAlleleFreq: number;
   clinicalNote: string;
-  _source?: 'curated_preset' | 'live_api' | 'cached' | 'fallback' | string;
-  isExploratoryPrototype?: boolean;
 }
 
 export interface BystanderEdit {
@@ -98,10 +96,14 @@ export interface BystanderEdit {
   originalAA: string;
   editedAA: string;
   classification: 'Target Edit' | 'Silent (Synonymous)' | 'Missense (Pathogenic Risk)' | 'Nonsense (Premature Stop)';
+  // Filled by the backend's /external/clinvar/annotate (a rule plus a Grantham distance; NOT a ClinVar
+  // lookup). The app shows src/engines/crispr/bystanderImpact.ts instead, which needs no backend.
   riskLevel?: string;
-  clinvarTag?: string;
-  granthamDistance?: number;
+  impactTag?: string;
+  granthamDistance?: number | null;
+  granthamClass?: string | null;
   biochemicalImpact?: string;
+  annotationBasis?: 'rule' | 'curated';
 }
 
 export interface VariantAnnotation {
@@ -124,7 +126,17 @@ export interface ExternalGeneMetadata extends GenePreset {
   error?: string;
 }
 
+/**
+ * Nearest-neighbor energies for one spacer.
+ *
+ * `source` says where it came from. 'browser' = the small in-browser estimator: the RNA:DNA hybrid,
+ * DNA:DNA duplex, net R-loop, seed/distal and GC-clamp values are computed (same equations as the
+ * Python backend), but the hairpin, homodimer, verdict and efficiency-bonus fields are placeholders
+ * because the browser has no folding code. Show them as "needs backend". 'backend' = the FastAPI
+ * engine computed everything.
+ */
 export interface ThermodynamicProfile {
+  source?: 'browser' | 'backend';
   spacer: string;
   rnaDnaDg37: number;
   rnaDnaDh: number;

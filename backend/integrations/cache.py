@@ -1,7 +1,14 @@
 # backend/integrations/cache.py
 """
 Persistent SQLite Cache Layer for External Biological APIs.
-Ensures zero latency on repeated queries and full offline functionality.
+
+What is stored, and what `_source` says about it:
+  - "live_api" answers from Ensembl are written here and come back labelled "cached" on the next lookup.
+  - Three gene entries (HBB, PCSK9, TTR) are bundled with the app so the demo presets can be searched
+    offline. They are demonstration entries with the same short sequences the presets use. They were not
+    fetched from Ensembl, so they are labelled "bundled", never "cached" or "validated".
+  - No SNP records are bundled. An rsID is either answered by Ensembl or reported as not looked up.
+
 Author: Arunabha Ghosh (MAKAUT)
 License: Apache-2.0
 """
@@ -13,6 +20,12 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+BUNDLED_NOTE = (
+    "Bundled demonstration entry, not fetched from Ensembl in this session. The sequence is the short "
+    "preset sequence the app uses; the canonical transcript ID ({transcript}) is given for reference. "
+    "The target base, SNP position and frequency are the preset's own demo inputs."
+)
+
 CACHE_DIR = Path(__file__).resolve().parent.parent / "cache"
 DB_PATH = CACHE_DIR / "bio_cache.db"
 
@@ -23,6 +36,7 @@ class BioCacheManager:
     def __init__(self, db_path: Path = DB_PATH) -> None:
         self.db_path = db_path
         self._ensure_tables()
+        self._purge_unverified_seeds()
         self._seed_benchmark_defaults()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -62,8 +76,23 @@ class BioCacheManager:
             )
             conn.commit()
 
+    def _purge_unverified_seeds(self) -> None:
+        """
+        Earlier versions seeded hand-written gene and SNP records and labelled them "cached" / "Ensembl GRCh38
+        Validated". Delete those rows from an existing database. Real Ensembl answers are stored as
+        "live_api", so this never touches them.
+        """
+        with self._get_connection() as conn:
+            conn.execute(
+                "DELETE FROM variant_cache WHERE data_json LIKE '%\"_source\": \"cached\"%'"
+            )
+            conn.execute(
+                "DELETE FROM gene_cache WHERE data_json LIKE '%Ensembl GRCh38 Validated%'"
+            )
+            conn.commit()
+
     def _seed_benchmark_defaults(self) -> None:
-        """Seeds benchmark clinical cases into local SQLite cache for offline reliability."""
+        """Bundles the three demonstration gene entries so the presets can be searched offline."""
         seeds = {
             "HBB": {
                 "id": "HBB",
@@ -79,11 +108,11 @@ class BioCacheManager:
                 "sasSnpIndex": 32,
                 "sasSnpId": "rs10768683",
                 "sasAlleleFreq": 0.142,
-                "clinicalNote": "Ensembl GRCh38 Validated. Canonical Transcript: ENST00000335295. High prevalence in Eastern India.",
+                "clinicalNote": BUNDLED_NOTE.format(transcript="ENST00000335295"),
                 "ensemblGeneId": "ENSG00000244734",
                 "canonicalTranscriptId": "ENST00000335295",
                 "chromosome": "11",
-                "_source": "cached",
+                "_source": "bundled",
             },
             "PCSK9": {
                 "id": "PCSK9",
@@ -99,17 +128,17 @@ class BioCacheManager:
                 "sasSnpIndex": 45,
                 "sasSnpId": "rs505151",
                 "sasAlleleFreq": 0.089,
-                "clinicalNote": "Ensembl GRCh38 Validated. Canonical Transcript: ENST00000302118. LNP hepatic delivery silences PCSK9.",
+                "clinicalNote": BUNDLED_NOTE.format(transcript="ENST00000302118"),
                 "ensemblGeneId": "ENSG00000169174",
                 "canonicalTranscriptId": "ENST00000302118",
                 "chromosome": "1",
-                "_source": "cached",
+                "_source": "bundled",
             },
             "TTR": {
                 "id": "TTR",
                 "symbol": "TTR (Chr 18q12.1)",
                 "name": "Transthyretin (V30M)",
-                "disease": "Hereditary ATTR Amyloidosis (NTLA-2001 Benchmark)",
+                "disease": "Hereditary ATTR Amyloidosis (TTR V30M, demonstration target)",
                 "targetOrgan": "Liver",
                 "editorType": "BE4max (C→T)",
                 "pamVariant": "SpCas9",
@@ -119,54 +148,17 @@ class BioCacheManager:
                 "sasSnpIndex": 52,
                 "sasSnpId": "rs76992529",
                 "sasAlleleFreq": 0.054,
-                "clinicalNote": "Ensembl GRCh38 Validated. Canonical Transcript: ENST00000237014. Hepatic LNP silences amyloid fibrils.",
+                "clinicalNote": BUNDLED_NOTE.format(transcript="ENST00000237014"),
                 "ensemblGeneId": "ENSG00000118271",
                 "canonicalTranscriptId": "ENST00000237014",
                 "chromosome": "18",
-                "_source": "cached",
+                "_source": "bundled",
             },
         }
 
         for sym, data in seeds.items():
             if not self.get_gene(sym):
                 self.set_gene(sym, data)
-
-        variant_seeds = {
-            "rs10768683": {
-                "variantId": "rs10768683",
-                "name": "rs10768683",
-                "mostSevereConsequence": "intron_variant",
-                "clinicalSignificance": ["Benign", "Likely Benign"],
-                "sasFrequency": 0.142,
-                "minorAllele": "T",
-                "ancestralAllele": "C",
-                "_source": "cached",
-            },
-            "rs505151": {
-                "variantId": "rs505151",
-                "name": "rs505151 (G670E)",
-                "mostSevereConsequence": "missense_variant",
-                "clinicalSignificance": ["Benign", "Protective Against CHD"],
-                "sasFrequency": 0.089,
-                "minorAllele": "A",
-                "ancestralAllele": "G",
-                "_source": "cached",
-            },
-            "rs76992529": {
-                "variantId": "rs76992529",
-                "name": "rs76992529 (V30M)",
-                "mostSevereConsequence": "missense_variant",
-                "clinicalSignificance": ["Pathogenic", "ATTR Amyloidosis"],
-                "sasFrequency": 0.054,
-                "minorAllele": "T",
-                "ancestralAllele": "C",
-                "_source": "cached",
-            },
-        }
-        for vid, data in variant_seeds.items():
-            if not self.get_variant(vid):
-                self.set_variant(vid, data)
-
 
     def get_gene(self, symbol: str) -> Optional[dict[str, Any]]:
         sym = symbol.strip().upper()

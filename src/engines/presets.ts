@@ -1,6 +1,10 @@
 // src/engines/presets.ts
 import type { GenePreset } from './types';
 
+// The SNP id and frequency on each preset are demonstration inputs: one marker per target so the SNP-collision
+// filter has something to show. They were not looked up in Ensembl or gnomAD. In Custom mode the "SAS SNP" box
+// asks the backend for a real Ensembl value and replaces them. The sequences are short snippets (about 90 nt) of
+// each gene's coding sequence; the HBB one carries the sickle (GTG) allele on purpose.
 export const GENE_PRESETS: GenePreset[] = [
   {
     id: 'HBB',
@@ -16,8 +20,7 @@ export const GENE_PRESETS: GenePreset[] = [
     sasSnpIndex: 32,
     sasSnpId: 'rs10768683 (SAS Variant)',
     sasAlleleFreq: 0.142,
-    clinicalNote: 'High prevalence in West Bengal & Eastern India. Converts pathogenic HbS (GTG) to benign HbG-Makassar (GCG) via Adenine Base Editing.',
-    _source: 'curated_preset',
+    clinicalNote: 'An adenine base editor can convert the sickle (HbS) valine codon GTG to the Hb G-Makassar alanine codon GCG; G-Makassar has been reported as non-sickling (Newby et al., Nature 2021).'
   },
   {
     id: 'PCSK9',
@@ -32,14 +35,13 @@ export const GENE_PRESETS: GenePreset[] = [
     sasSnpIndex: 45,
     sasSnpId: 'rs505151 (SAS G670E proxy)',
     sasAlleleFreq: 0.089,
-    clinicalNote: 'Disrupts PCSK9 hepatic expression via LNP-delivered mRNA base editor to permanently lower LDL cholesterol.',
-    _source: 'curated_preset',
+    clinicalNote: 'Disrupts PCSK9 hepatic expression via LNP-delivered mRNA base editor to permanently lower LDL cholesterol.'
   },
   {
     id: 'TTR',
     symbol: 'TTR (Exon 2)',
     name: 'Transthyretin (V30M)',
-    disease: 'Hereditary ATTR Amyloidosis (NTLA-2001 Benchmark)',
+    disease: 'Hereditary ATTR Amyloidosis (TTR V30M, demonstration target)',
     targetOrgan: 'Liver',
     editorType: 'BE4max (C→T)',
     pamVariant: 'SpCas9',
@@ -48,7 +50,6 @@ export const GENE_PRESETS: GenePreset[] = [
     sasSnpIndex: 52,
     sasSnpId: 'rs76992529 (SAS TTR Variant)',
     sasAlleleFreq: 0.054,
-    clinicalNote: 'Hepatic LNP delivery silences misfolded transthyretin protein production in serum.',
-    _source: 'curated_preset',
+    clinicalNote: 'TTR is made in the liver, so hepatic LNP delivery is the route. Demonstration target: this sequence holds only the first 31 codons (the signal peptide and the start of the protein); the V30M site (precursor residue 50) is not in it.'
   }
 ];

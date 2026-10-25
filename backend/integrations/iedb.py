@@ -1,8 +1,16 @@
 # backend/integrations/iedb.py
 """
-Local South Asian HLA Class I Anchor-Motif Binding Proxy (Calibrated to IEDB / Sidney Anchor Classifications).
-Provides rapid, zero-latency 9-mer peptide MHC-I affinity scoring tailored to high-frequency
-South Asian (SAS) haplotypes without blocking on remote external API rate-limits.
+Anchor-motif heuristic for 9-mer peptide / HLA class I binding.
+
+This is NOT the IEDB service and NOT a trained predictor (NetMHCpan, MHCflurry and the IEDB tools
+are). It scores a peptide from two things only: how well residues 2 and 9 match a small hand-written
+anchor table for five alleles, and a little credit for hydrophobic residues. The 0-100 score is a
+ranking aid for the demo. The "IC50" is a straight-line rescaling of that score. Neither is a
+measured or predicted binding affinity, and neither should be quoted as one.
+
+An allele that is not in HLA_MOTIFS is scored with the HLA-A*02:01 table. The result says so in
+`alleleModelled` and `alleleSupported`.
+
 Author: Arunabha Ghosh (MAKAUT)
 License: Apache-2.0
 """
@@ -11,8 +19,8 @@ from __future__ import annotations
 from typing import Any
 from backend.integrations.cache import bio_cache
 
-# Canonical peptide anchor motifs for South Asian HLA Class I alleles
-# P2 and P9 anchor preferences (normalized affinity weights derived from Sidney et al. / Sette et al.)
+# Hand-written P2 and P9 anchor preferences for five HLA class I alleles (weights 0-1).
+# These are approximations written for this demo, not values exported from IEDB or a trained model.
 HLA_MOTIFS: dict[str, dict[str, dict[str, float]]] = {
     "HLA-A*02:01": {
         "P2": {"L": 1.0, "M": 0.9, "I": 0.8, "V": 0.7, "A": 0.4, "T": 0.3},
@@ -37,10 +45,26 @@ HLA_MOTIFS: dict[str, dict[str, dict[str, float]]] = {
 }
 
 
+METHOD_NOTE = "anchor-motif heuristic (P2/P9 table + hydrophobicity); not IEDB, not NetMHCpan"
+IC50_NOTE = "linear rescaling of the heuristic score; not a predicted or measured IC50"
+
+
+def _with_method(result: dict[str, Any], requested_allele: str) -> dict[str, Any]:
+    """Adds the fields that say what the score is. Applied on cache hits too, so old rows get them."""
+    supported = requested_allele in HLA_MOTIFS
+    return {
+        **result,
+        "method": METHOD_NOTE,
+        "ic50Note": IC50_NOTE,
+        "alleleSupported": supported,
+        "alleleModelled": requested_allele if supported else "HLA-A*02:01",
+    }
+
+
 def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
     """
-    Computes MHC-I binding affinity score (0-100) and IC50 estimate (nM)
-    for a 9-mer peptide against a given HLA allele using a local PSSM anchor proxy.
+    Heuristic 0-100 anchor-fit score and a rescaled IC50 figure (nM) for a 9-mer against one HLA allele.
+    See the module docstring for what this is and is not.
     """
     pep = peptide.strip().upper()
     all_clean = allele.strip()
@@ -52,24 +76,13 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
             "score": 0,
             "ic50Nm": 10000.0,
             "classification": "Invalid Length (Requires 9-mer)",
-            "isFallbackAllele": False,
-            "fallbackAlleleUsed": None,
-            "note": "Peptide must be exactly 9 amino acids.",
         }
 
     cached = bio_cache.get_epitope(pep, all_clean)
     if cached:
-        return cached
+        return _with_method(cached, all_clean)
 
-    is_fallback = False
-    fallback_allele = None
-    if all_clean in HLA_MOTIFS:
-        motif = HLA_MOTIFS[all_clean]
-    else:
-        is_fallback = True
-        fallback_allele = "HLA-A*02:01"
-        motif = HLA_MOTIFS["HLA-A*02:01"]
-
+    motif = HLA_MOTIFS.get(all_clean, HLA_MOTIFS["HLA-A*02:01"])
     p2_weights = motif.get("P2", {})
     p9_weights = motif.get("P9", {})
 
@@ -89,10 +102,8 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
 
     normalized_score = max(5, min(98, int(base_affinity * 100)))
 
-    # Empirical surrogate mapping composite anchor score to standard clinical IC50 thresholds:
-    # Score 80+ -> IC50 < 50 nM (Strong binder / high immunogenicity risk)
-    # Score 60-79 -> IC50 50-500 nM (Weak binder / potential epitope)
-    # Score < 60 -> IC50 > 500 nM (Non-binder / immune tolerant)
+    # Rescale the score to an IC50-like number in nM (lower = tighter), using the usual 50 / 500 nM
+    # strong / weak cut-offs as anchors. This is a display convention, not a prediction.
     if normalized_score >= 80:
         ic50_nm = round(50.0 * (1.0 - (normalized_score - 80) / 20.0), 1)
         classification = "Strong Binder (High Immunogenicity Risk)"
@@ -103,12 +114,6 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
         ic50_nm = round(500.0 + (100 - normalized_score) * 50.0, 1)
         classification = "Non-Binder (Immune Tolerant)"
 
-    note = (
-        f"Evaluated against South Asian panel {all_clean} anchor motif."
-        if not is_fallback
-        else f"Allele '{all_clean}' not in South Asian 5-allele panel; approximate proxy evaluated against reference HLA-A*02:01."
-    )
-
     result = {
         "peptide": pep,
         "allele": all_clean,
@@ -117,22 +122,18 @@ def score_peptide_hla_binding(peptide: str, allele: str) -> dict[str, Any]:
         "classification": classification,
         "p2Anchor": p2_char,
         "p9Anchor": p9_char,
-        "isFallbackAllele": is_fallback,
-        "fallbackAlleleUsed": fallback_allele,
-        "note": note,
-        "method": "Local PSSM Anchor-Motif Surrogate (Sidney/Sette Calibrated)",
     }
 
     bio_cache.set_epitope(pep, all_clean, result)
-    return result
+    return _with_method(result, all_clean)
 
 
 def scan_protein_for_epitopes(
     sequence: str, allele: str, min_score: int = 70
 ) -> list[dict[str, Any]]:
     """
-    Scans a protein sequence (e.g., Cas9 domain or deaminase) with a sliding 9-mer window
-    and returns all hotspots meeting the minimum immunogenicity score.
+    Slides a 9-mer window along a protein and returns every window whose heuristic score is at least
+    `min_score`, best first. Same caveats as score_peptide_hla_binding().
     """
     seq = sequence.strip().upper()
     hits: list[dict[str, Any]] = []

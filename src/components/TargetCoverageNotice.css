@@ -1,0 +1,46 @@
+/* src/components/TargetCoverageNotice.css
+ * One state colour (warning); everything else is neutral. */
+
+.tcn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--color-canvas, #12110f);
+  border: 1px solid var(--color-border-muted, #24201b);
+  border-left: 2px solid var(--color-status-warning, #c98a3b);
+  border-radius: var(--radius-default, 3px);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+.tcn__text {
+  margin: 0;
+}
+
+.tcn__text strong {
+  font-weight: 600;
+  color: var(--color-text-primary, #e8dfd1);
+}
+
+.tcn__options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.tcn__label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary, #a69b8d);
+}
+
+.tcn__count {
+  margin-left: 6px;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary, #a69b8d);
+}

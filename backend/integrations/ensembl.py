@@ -2,6 +2,16 @@
 """
 Ensembl REST API Client for Dynamic Genomic Lookup & CDS Extraction.
 Enables CRISPR guide scanning across arbitrary human genes (GRCh38).
+
+What comes from Ensembl: the gene ID, description, biotype, chromosome, canonical transcript ID and the CDS.
+What does not: `mutationIndex`, `sasSnpIndex`, `sasSnpId` and `sasAlleleFreq` below are placeholders so the
+preset has a target base and a SNP marker to draw. They say nothing about the gene. The front end labels them
+as placeholders, and the SNP lookup (integrations/clinvar.py, lookup_variant_details) is the way to get a real
+frequency for an rsID.
+
+`_source` is "live_api" (Ensembl answered now), "cached" (an earlier Ensembl answer) or "bundled" (one of the
+three demonstration entries shipped with the app).
+
 Author: Arunabha Ghosh (MAKAUT)
 License: Apache-2.0
 """
@@ -32,7 +42,8 @@ async def lookup_ensembl_gene(
     cached = bio_cache.get_gene(clean_sym)
     if cached:
         logger.info(f"Retrieved gene {clean_sym} from local SQLite cache.")
-        cached["_source"] = "cached"
+        if cached.get("_source") != "bundled":
+            cached["_source"] = "cached"
         return cached
 
     # 2. Live query Ensembl REST API
@@ -103,19 +114,18 @@ async def lookup_ensembl_gene(
                 "pamVariant": "SpCas9",
                 "sequence": cds_sequence[:120] if len(cds_sequence) >= 120 else cds_sequence,
                 "fullCdsLength": len(cds_sequence),
+                # Placeholders, not Ensembl data (see the module docstring)
                 "mutationIndex": 21,
                 "sasSnpIndex": 42,
                 "sasSnpId": f"Ensembl-{transcript_id}",
                 "sasAlleleFreq": 0.05,
                 "clinicalNote": (
-                    f"Live Ensembl CDS extraction (GRCh38, {transcript_id}). "
-                    "Note: Locus position 21 and SNP index 42 are illustrative exploratory prototype coordinates; "
-                    "set specific patient mutation coordinate for formal clinical evaluation."
+                    f"Live Ensembl annotation (GRCh38). Gene: {gene_id}, "
+                    f"Canonical Transcript: {transcript_id}, Biotype: {biotype}."
                 ),
                 "ensemblGeneId": gene_id,
                 "canonicalTranscriptId": transcript_id,
                 "chromosome": str(chrom),
-                "isExploratoryPrototype": True,
                 "_source": "live_api",
             }
 
